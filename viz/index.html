@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modelo Toró — Simulação de Precipitação Catastrófica</title>
+    <meta name="description" content="Visualização do modelo Toró: fenômeno de precipitação extrema com glaciação secundária explosiva no Vale do Revólver, SC.">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- HEADER -->
+    <header id="main-header">
+        <div class="header-content">
+            <div class="header-title">
+                <h1>🌩️ Modelo <span class="accent">Toró</span></h1>
+                <p class="subtitle">Precipitação Catastrófica por Glaciação Secundária Explosiva</p>
+            </div>
+            <div class="header-meta">
+                <span class="badge">Vale do Revólver, SC</span>
+                <span class="badge accent-badge">v1.0</span>
+            </div>
+        </div>
+        <nav id="main-nav">
+            <button class="nav-btn active" data-section="conceptual" id="nav-conceptual">Modelo Conceitual</button>
+            <button class="nav-btn" data-section="results" id="nav-results">Resultados</button>
+            <button class="nav-btn" data-section="impact" id="nav-impact">Impacto</button>
+        </nav>
+    </header>
+
+    <!-- SECTION 1: CONCEPTUAL MODEL -->
+    <section id="section-conceptual" class="content-section active">
+        <h2 class="section-title">Cadeia Física do Toró — 6 Estágios</h2>
+        
+        <div class="concept-flow">
+            <!-- Stage 1 -->
+            <div class="stage-card" id="stage-1">
+                <div class="stage-number">1</div>
+                <div class="stage-icon">🌧️</div>
+                <h3>Supercélula DSD Estreita</h3>
+                <p>Fase decadente, sotavento. DSD Gamma com μ=20 (muito estreita). Gotas supercongeladas uniformes.</p>
+                <div class="stage-details">
+                    <div class="param"><span class="label">μ (forma)</span><span class="value" id="val-mu">20</span></div>
+                    <div class="param"><span class="label">D_mean</span><span class="value">20 μm</span></div>
+                    <div class="param"><span class="label">CAPE</span><span class="value">2500 J/kg</span></div>
+                </div>
+                <div class="stage-signature">
+                    <span class="sig-tag">BWER Paradoxal</span>
+                    <span class="sig-tag">Nuvens Iridescentes</span>
+                </div>
+            </div>
+            <div class="flow-arrow">→</div>
+
+            <!-- Stage 2 -->
+            <div class="stage-card" id="stage-2">
+                <div class="stage-number">2</div>
+                <div class="stage-icon">🌪️</div>
+                <h3>Injeção por Tromba</h3>
+                <p>Vórtice de Rankine transporta INPs da superfície para dentro da nuvem supercongelada.</p>
+                <div class="stage-details">
+                    <div class="param"><span class="label">V_max</span><span class="value" id="val-vmax">70 m/s</span></div>
+                    <div class="param"><span class="label">R_max</span><span class="value">150 m</span></div>
+                    <div class="param"><span class="label">Escala EF</span><span class="value">EF2-EF3</span></div>
+                </div>
+                <div class="stage-signature">
+                    <span class="sig-tag">Tornado</span>
+                    <span class="sig-tag">Injeção de INPs</span>
+                </div>
+            </div>
+            <div class="flow-arrow">→</div>
+
+            <!-- Stage 3 -->
+            <div class="stage-card highlight" id="stage-3">
+                <div class="stage-number">3</div>
+                <div class="stage-icon">❄️</div>
+                <h3>SIP Explosiva</h3>
+                <p>Hallett-Mossop + Quebra Colisional (Phillips 2017). Cascata de multiplicação de gelo exponencial.</p>
+                <div class="stage-details">
+                    <div class="param"><span class="label">H-M rate</span><span class="value">350 spl/mg</span></div>
+                    <div class="param"><span class="label">Zona H-M</span><span class="value">-3°C a -8°C</span></div>
+                    <div class="param"><span class="label">Pico Phillips</span><span class="value">-15°C</span></div>
+                </div>
+                <div class="stage-signature">
+                    <span class="sig-tag sip">Glaciação Explosiva</span>
+                    <span class="sig-tag sip">Calor Latente L_f</span>
+                </div>
+            </div>
+            <div class="flow-arrow">→</div>
+
+            <!-- Stage 4 -->
+            <div class="stage-card" id="stage-4">
+                <div class="stage-number">4</div>
+                <div class="stage-icon">🧊</div>
+                <h3>Pistão Hidráulico</h3>
+                <p>Massa de graupel/granizo acumula até milhares de toneladas. Coesão por fração de gelo >60% → corpo semi-rígido.</p>
+                <div class="stage-details">
+                    <div class="param"><span class="label">M_piston</span><span class="value" id="val-mpiston">—</span></div>
+                    <div class="param"><span class="label">ρ_mix</span><span class="value" id="val-rhomix">—</span></div>
+                    <div class="param"><span class="label">H_piston</span><span class="value" id="val-hpiston">—</span></div>
+                </div>
+                <div class="stage-signature">
+                    <span class="sig-tag">Corpo Rígido</span>
+                    <span class="sig-tag">Peso > Sustentação</span>
+                </div>
+            </div>
+            <div class="flow-arrow collapse-arrow">⬇️</div>
+
+            <!-- Stage 5 -->
+            <div class="stage-card danger" id="stage-5">
+                <div class="stage-number">5</div>
+                <div class="stage-icon">💥</div>
+                <h3>Colapso Coerente</h3>
+                <p>M·g > ∫B·ρ·A·dz → queda como prensa hidráulica. Impacto Joukowsky (water hammer).</p>
+                <div class="stage-details">
+                    <div class="param"><span class="label">v_impact</span><span class="value" id="val-vimpact">—</span></div>
+                    <div class="param"><span class="label">P_impact</span><span class="value" id="val-pimpact">—</span></div>
+                    <div class="param"><span class="label">E_impact</span><span class="value" id="val-eimpact">—</span></div>
+                </div>
+                <div class="stage-signature">
+                    <span class="sig-tag danger-tag">Water Hammer</span>
+                </div>
+            </div>
+            <div class="flow-arrow">→</div>
+
+            <!-- Stage 6 -->
+            <div class="stage-card impact-card" id="stage-6">
+                <div class="stage-number">6</div>
+                <div class="stage-icon">🔊</div>
+                <h3>Impacto: Som + Sísmica + Erosão</h3>
+                <p>Som "Tó" (vagão desgovernado). Terremoto M 2-3. Erosão linear 1-10 ton. <strong>Zero barro.</strong></p>
+                <div class="stage-details">
+                    <div class="param"><span class="label">M_L (Richter)</span><span class="value" id="val-ml">—</span></div>
+                    <div class="param"><span class="label">M_erodida</span><span class="value" id="val-eroded">—</span></div>
+                    <div class="param"><span class="label">Barro</span><span class="value" id="val-mud">—</span></div>
+                </div>
+                <div class="stage-signature">
+                    <span class="sig-tag impact-tag">Som "Tó"</span>
+                    <span class="sig-tag impact-tag">Zero Barro</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Vertical Column Diagram -->
+        <div class="column-diagram-container">
+            <h2 class="section-title">Perfil Vertical da Coluna</h2>
+            <canvas id="canvas-column" width="900" height="600"></canvas>
+        </div>
+
+        <!-- Key Equations -->
+        <div class="equations-grid">
+            <div class="eq-card">
+                <h4>DSD Gamma</h4>
+                <div class="equation">N(D) = N₀ · D<sup>μ</sup> · e<sup>-ΛD</sup></div>
+                <p>Λ = (μ+1)/D̄, μ=20 (estreita)</p>
+            </div>
+            <div class="eq-card">
+                <h4>Hallett-Mossop</h4>
+                <div class="equation">dN/dt = 350 · f(T) · dm<sub>rime</sub>/dt</div>
+                <p>f(T): triangular -3°C a -8°C, pico -5°C</p>
+            </div>
+            <div class="eq-card">
+                <h4>Flutuabilidade</h4>
+                <div class="equation">B = g·(T<sub>v,p</sub>-T<sub>v,e</sub>)/T<sub>v,e</sub> - g·(q<sub>l</sub>+q<sub>i</sub>)</div>
+                <p>Carregamento de precipitação</p>
+            </div>
+            <div class="eq-card">
+                <h4>Joukowsky</h4>
+                <div class="equation">P = ρ<sub>mix</sub> · c<sub>sound</sub> · v<sub>impact</sub></div>
+                <p>Water hammer no impacto</p>
+            </div>
+            <div class="eq-card">
+                <h4>Momento Vertical</h4>
+                <div class="equation">dw/dt = B - C<sub>d</sub>w|w|/2R - εw</div>
+                <p>Arrasto + entrainment</p>
+            </div>
+            <div class="eq-card">
+                <h4>Gutenberg-Richter</h4>
+                <div class="equation">M<sub>L</sub> = ⅔·log₁₀(E<sub>seis</sub>) - 1.17</div>
+                <p>Magnitude local (Richter)</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- SECTION 2: SIMULATION RESULTS -->
+    <section id="section-results" class="content-section">
+        <h2 class="section-title">Resultados da Simulação</h2>
+        
+        <div class="results-grid">
+            <!-- Panel 1: Vertical Profile -->
+            <div class="panel" id="panel-profile">
+                <div class="panel-header">
+                    <h3>Perfil Vertical</h3>
+                    <span class="panel-badge">w(z), LWC, IWC</span>
+                </div>
+                <canvas id="canvas-profile" width="400" height="350"></canvas>
+            </div>
+
+            <!-- Panel 2: Time Series -->
+            <div class="panel" id="panel-timeseries">
+                <div class="panel-header">
+                    <h3>Evolução Temporal</h3>
+                    <span class="panel-badge">w_max(t)</span>
+                </div>
+                <canvas id="canvas-timeseries" width="400" height="350"></canvas>
+            </div>
+
+            <!-- Panel 3: Radar BWER -->
+            <div class="panel" id="panel-radar">
+                <div class="panel-header">
+                    <h3>Radar Z(dBZ)</h3>
+                    <span class="panel-badge">BWER</span>
+                </div>
+                <canvas id="canvas-radar" width="400" height="350"></canvas>
+            </div>
+
+            <!-- Panel 4: Tornado Wind -->
+            <div class="panel" id="panel-tornado">
+                <div class="panel-header">
+                    <h3>Vento Tornado</h3>
+                    <span class="panel-badge">Rankine V<sub>t</sub>(r)</span>
+                </div>
+                <canvas id="canvas-tornado" width="400" height="350"></canvas>
+            </div>
+
+            <!-- Panel 5: Piston Fall -->
+            <div class="panel" id="panel-fall">
+                <div class="panel-header">
+                    <h3>Queda do Pistão</h3>
+                    <span class="panel-badge">z(t), v(t)</span>
+                </div>
+                <canvas id="canvas-fall" width="400" height="350"></canvas>
+            </div>
+
+            <!-- Panel 6: DSD Bins -->
+            <div class="panel" id="panel-dsd">
+                <div class="panel-header">
+                    <h3>DSD Gamma (μ=20)</h3>
+                    <span class="panel-badge">N(D)</span>
+                </div>
+                <canvas id="canvas-dsd" width="400" height="350"></canvas>
+            </div>
+        </div>
+    </section>
+
+    <!-- SECTION 3: IMPACT -->
+    <section id="section-impact" class="content-section">
+        <h2 class="section-title">Efeitos do Impacto</h2>
+        
+        <div class="impact-grid">
+            <!-- Sound Card -->
+            <div class="impact-card-large" id="card-sound">
+                <div class="impact-icon">🔊</div>
+                <h3>Som "Tó"</h3>
+                <p class="impact-desc">Descrito como um vagão de trem desgovernado</p>
+                <div class="impact-stats">
+                    <div class="stat"><span class="stat-label">SPL a 1km</span><span class="stat-value" id="val-spl">—</span></div>
+                    <div class="stat"><span class="stat-label">Infrassom</span><span class="stat-value">1-5 Hz</span></div>
+                    <div class="stat"><span class="stat-label">Estrondo</span><span class="stat-value">5-50 Hz</span></div>
+                    <div class="stat"><span class="stat-label">Rumble</span><span class="stat-value">50-200 Hz</span></div>
+                </div>
+                <canvas id="canvas-sound" width="500" height="200"></canvas>
+            </div>
+
+            <!-- Seismic Card -->
+            <div class="impact-card-large" id="card-seismic">
+                <div class="impact-icon">📊</div>
+                <h3>Sismograma</h3>
+                <p class="impact-desc">Ricker wavelet — terremoto por impacto</p>
+                <div class="impact-stats">
+                    <div class="stat"><span class="stat-label">Magnitude</span><span class="stat-value" id="val-ml2">—</span></div>
+                    <div class="stat"><span class="stat-label">f dominante</span><span class="stat-value">3 Hz</span></div>
+                    <div class="stat"><span class="stat-label">E_seis</span><span class="stat-value" id="val-eseis">—</span></div>
+                </div>
+                <canvas id="canvas-seismic" width="500" height="200"></canvas>
+            </div>
+
+            <!-- Erosion Card -->
+            <div class="impact-card-large full-width" id="card-erosion">
+                <div class="impact-icon">🏔️</div>
+                <h3>Erosão Linear — Assinatura Diagnóstica</h3>
+                <p class="impact-desc">Lavagem seletiva completa: <strong>ZERO barro residual</strong></p>
+                <div class="erosion-grid">
+                    <div class="erosion-col">
+                        <h4>Massa Erodida</h4>
+                        <div class="big-number" id="val-eroded2">—</div>
+                        <div class="erosion-composition" id="composition-bars"></div>
+                    </div>
+                    <div class="erosion-col">
+                        <h4>Lavagem Seletiva (Shields)</h4>
+                        <div class="wash-table">
+                            <div class="wash-row header"><span>Classe</span><span>τ/τ_cr</span><span>Mobilizado</span></div>
+                            <div class="wash-row" id="wash-clay"><span>Argila</span><span>—</span><span>—</span></div>
+                            <div class="wash-row" id="wash-silt"><span>Silte</span><span>—</span><span>—</span></div>
+                            <div class="wash-row" id="wash-sand"><span>Areia</span><span>—</span><span>—</span></div>
+                            <div class="wash-row" id="wash-gravel"><span>Cascalho</span><span>—</span><span>—</span></div>
+                        </div>
+                    </div>
+                    <div class="erosion-col">
+                        <h4>Geometria do Canal</h4>
+                        <canvas id="canvas-erosion" width="300" height="200"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer id="main-footer">
+        <p>Haas, R. (2026) — <em>The Toroh Hypothesis</em> — UFSC, Florianópolis, SC</p>
+        <p class="footer-sub">Vale do Revólver, Presidente Getúlio, SC | -26.89°S, -49.37°W</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
