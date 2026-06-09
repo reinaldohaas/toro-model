@@ -348,18 +348,41 @@ class ToroSimulation3D:
             self.theta_rho += dtheta_adv * dt
             self.qv += dqv_adv * dt
             
-            # Clamps de segurança
-            self.w = np.clip(self.w, -80, 80)
-            self.u = np.clip(self.u, -80, 80)
-            self.v = np.clip(self.v, -80, 80)
+            # Clamps de segurança — vento
+            self.w = np.clip(self.w, -50, 50)   # w realista para supercélula
+            self.u = np.clip(self.u, -50, 50)
+            self.v = np.clip(self.v, -50, 50)
             self.w[:, :, 0] = 0.0   # w=0 na superfície
             self.w[:, :, -1] = 0.0  # w=0 no topo
-            self.qv = np.maximum(self.qv, 0)
-            self.qc = np.maximum(self.qc, 0)
-            self.qr = np.maximum(self.qr, 0)
-            self.qi = np.maximum(self.qi, 0)
-            self.qs = np.maximum(self.qs, 0)
-            self.qg = np.maximum(self.qg, 0)
+            
+            # Clamps de massa — CRÍTICO para estabilidade
+            # Valores máximos realistas para uma supercélula extrema:
+            #   q_v  ≤ 25 g/kg  (trópicos extremos)
+            #   q_c  ≤ 8 g/kg   (updraft vigoroso)
+            #   q_r  ≤ 10 g/kg  (chuva intensa)
+            #   q_i  ≤ 5 g/kg   (cristais de gelo)
+            #   q_s  ≤ 5 g/kg   (neve)
+            #   q_g  ≤ 15 g/kg  (granizo/graupel extremo)
+            # Total ≤ 30 g/kg para conservação de massa
+            self.qv = np.clip(self.qv, 0.0, 0.025)
+            self.qc = np.clip(self.qc, 0.0, 0.008)
+            self.qr = np.clip(self.qr, 0.0, 0.010)
+            self.qi = np.clip(self.qi, 0.0, 0.005)
+            self.qs = np.clip(self.qs, 0.0, 0.005)
+            self.qg = np.clip(self.qg, 0.0, 0.015)
+            
+            # Conservação: q_total_hydro ≤ 30 g/kg
+            q_total_hydro = self.qc + self.qr + self.qi + self.qs + self.qg
+            excess_mask = q_total_hydro > 0.030
+            if np.any(excess_mask):
+                scale = np.where(excess_mask, 
+                                 0.030 / np.maximum(q_total_hydro, 1e-30),
+                                 1.0)
+                self.qc *= scale
+                self.qr *= scale
+                self.qi *= scale
+                self.qs *= scale
+                self.qg *= scale
             
             # Sanitizar
             self.theta_rho = np.nan_to_num(self.theta_rho, 
@@ -562,55 +585,60 @@ class ToroSimulation3D:
         
         # --- Som "Tó" ---
         cfg_ac = self.config.acoustics
+        A_piston = np.pi * (D_piston / 2) ** 2
         sound_data = generate_toro_sound(
             v_impact=v_impact,
-            M_piston=M_piston,
             D_piston=D_piston,
-            sr=cfg_ac.sample_rate,
-            duration=cfg_ac.duration
+            M_piston=M_piston,
+            config=cfg_ac,
+            output_dir='output'
         )
         
-        spl_1km = compute_spl(P_impact, distance=1000)
+        spl_1km = compute_spl(P_impact, A_piston=A_piston, distance=1000)
         print(f"\n  --- Som 'Tó' ---")
         print(f"  SPL a 1km: {spl_1km:.1f} dB")
         
         # --- Sísmica ---
         cfg_seis = self.config.seismic
-        eta_seis = cfg_seis.eta_seismic
-        E_seismic = E_impact * eta_seis
-        M_L = compute_seismic_magnitude(E_seismic)
+        M_L, E_seismic = compute_seismic_magnitude(E_impact, config=cfg_seis)
         print(f"\n  --- Sísmica ---")
         print(f"  M_L = {M_L:.2f} (Richter)")
         print(f"  E_seis = {E_seismic:.2e} J")
         
         seismogram = generate_seismogram(
-            E_seismic=E_seismic,
+            M_L=M_L,
             f_dominant=cfg_seis.f_dominant,
             duration=cfg_seis.duration,
-            sr=cfg_seis.sample_rate
+            dt=1.0 / cfg_seis.sample_rate,
+            config=cfg_seis
         )
         
         # --- Erosão ---
         cfg_ero = self.config.erosion
-        M_eroded = compute_eroded_mass(
+        erosion_result = compute_eroded_mass(
+            E_impact=E_impact,
             P_impact=P_impact,
-            A_impact=np.pi * (D_piston / 2) ** 2,
             config=cfg_ero
         )
+        M_eroded = erosion_result['M_eroded']
+        V_eroded = erosion_result['V_eroded']
+        
+        theta_slope = np.radians(30)  # Inclinação típica do desfiladeiro
         wash = compute_selective_washing(
-            v_impact=v_impact,
-            D_piston=D_piston,
+            P_impact=P_impact,
+            theta_slope=theta_slope,
             config=cfg_ero
         )
         geometry = compute_erosion_geometry(
-            M_eroded=M_eroded,
+            V_eroded=V_eroded,
             D_piston=D_piston,
             config=cfg_ero
         )
         
+        clay_remaining_pct = wash.get('clay_fraction_remaining', 0) * 100
         print(f"\n  --- Erosão ---")
         print(f"  M_erodida = {M_eroded:.0f} kg ({M_eroded/1000:.1f} ton)")
-        print(f"  Barro residual: {wash.get('mud_percent', 0)}%")
+        print(f"  Barro residual: {clay_remaining_pct:.0f}%")
         
         self.results['phase3'] = {
             'sound': {
@@ -625,23 +653,19 @@ class ToroSimulation3D:
             'erosion': {
                 'M_eroded_kg': float(M_eroded),
                 'M_eroded_ton': float(M_eroded / 1000),
-                'mud_percent': int(wash.get('mud_percent', 0)),
-                'composition': wash.get('composition', {}),
-                'D_max_mobilized': float(wash.get('D_max_mobilized_mm', 0)),
+                'mud_percent': int(clay_remaining_pct),
+                'composition': erosion_result.get('composition', {}),
+                'D_max_mobilized': float(wash.get('D_max_mobilized', 0)),
                 'channel': geometry,
-                'wash': wash.get('shields_table', {}),
+                'wash': wash.get('size_classes', {}),
             },
         }
         
-        # Salvar som
-        os.makedirs('output', exist_ok=True)
-        if 'waveform' in sound_data:
-            import scipy.io.wavfile as wav
-            sr = cfg_ac.sample_rate
-            waveform = np.array(sound_data['waveform'])
-            waveform = waveform / (np.max(np.abs(waveform)) + 1e-10)
-            waveform_int = np.int16(waveform * 32767)
-            wav.write('output/toro_sound.wav', sr, waveform_int)
+        # O som já é salvo por generate_toro_sound via output_dir
+        # Verificar se existe o WAV
+        wav_path = sound_data.get('wav_path', '')
+        if wav_path:
+            print(f"  Som salvo: {wav_path}")
     
     # ================================================================
     # EXECUTAR TUDO

@@ -161,6 +161,8 @@ class SeismicConfig:
     M_L_max: float = 3.0          # magnitude máxima observada
     f_dominant: float = 3.0       # Hz — frequência sísmica dominante
     alpha_atten: float = 0.005    # 1/m — atenuação com distância
+    sample_rate: int = 200        # Hz — taxa de amostragem do sismograma
+    duration: float = 10.0        # s — duração do sismograma
 
 
 @dataclass
