@@ -709,9 +709,10 @@ class ToroSimulation3D:
         print("=" * 60)
     
     def _save_netcdf(self):
-        """Salva campos 3D em formato NetCDF."""
+        """Salva campos 3D em formato NetCDF CF-1.6 (compatível com IDV/Panoply)."""
         try:
             from netCDF4 import Dataset
+            import numpy as np
         except ImportError:
             print("  [WARN] netCDF4 não instalado. Salvando apenas JSON.")
             return
@@ -719,78 +720,249 @@ class ToroSimulation3D:
         filepath = 'output/toro3d.nc'
         ds = Dataset(filepath, 'w', format='NETCDF4')
         
+        # ============================================================
+        # Atributos globais CF-1.6 (IDV exige Conventions)
+        # ============================================================
+        ds.Conventions = 'CF-1.6'
+        ds.title = 'Toro Model 3D - Anelastic Theta-rho Simulation'
+        ds.institution = 'Universidade Federal de Santa Catarina (UFSC)'
+        ds.source = 'toro-model v2.0 (3D anelastic)'
+        ds.history = 'Created by toro-model simulation3d.py'
+        ds.references = 'https://github.com/reinaldohaas/toro-model'
+        ds.comment = (f'Domain: {self.nx}x{self.ny}x{self.nz}, '
+                      f'dx={self.dx}m, dy={self.dy}m, dz={self.dz}m, '
+                      f'Periodic BC (x,y), rigid lid (z), no Coriolis')
+        ds.author = 'Reinaldo Haas, UFSC'
+        ds.location = f'{self.config.location.name}, {self.config.location.municipality}'
+        
+        # ============================================================
         # Dimensões
-        ds.createDimension('x', self.nx)
-        ds.createDimension('y', self.ny)
+        # ============================================================
+        ds.createDimension('time', None)  # unlimited para IDV
         ds.createDimension('z', self.nz)
-        ds.createDimension('time', len(self.history['time']))
+        ds.createDimension('y', self.ny)
+        ds.createDimension('x', self.nx)
         
-        # Coordenadas
-        x_var = ds.createVariable('x', 'f4', ('x',))
-        y_var = ds.createVariable('y', 'f4', ('y',))
-        z_var = ds.createVariable('z', 'f4', ('z',))
-        t_var = ds.createVariable('time', 'f4', ('time',))
-        
-        x_var[:] = self.grid.x
-        y_var[:] = self.grid.y
-        z_var[:] = self.grid.z
+        # ============================================================
+        # Coordenada: time (CF requer unidades "since" formato)
+        # ============================================================
+        t_var = ds.createVariable('time', 'f8', ('time',))
+        t_var.units = 'seconds since 2008-11-01 00:00:00'
+        t_var.calendar = 'standard'
+        t_var.standard_name = 'time'
+        t_var.long_name = 'Time since simulation start'
+        t_var.axis = 'T'
         t_var[:] = self.history['time']
         
-        x_var.units = 'm'
-        y_var.units = 'm'
+        # ============================================================
+        # Coordenada: z (altitude em metros, positive up)
+        # ============================================================
+        z_var = ds.createVariable('z', 'f4', ('z',))
         z_var.units = 'm'
-        t_var.units = 's'
+        z_var.standard_name = 'altitude'
+        z_var.long_name = 'Height above ground level'
+        z_var.axis = 'Z'
+        z_var.positive = 'up'
+        z_var[:] = self.grid.z
         
-        # Campos 3D (estado final)
-        for name, data, units in [
-            ('u', self.u, 'm/s'),
-            ('v', self.v, 'm/s'),
-            ('w', self.w, 'm/s'),
-            ('theta_rho', self.theta_rho, 'K'),
-            ('p_prime', self.p_prime, 'Pa'),
-            ('qv', self.qv * 1000, 'g/kg'),
-            ('qc', self.qc * 1000, 'g/kg'),
-            ('qr', self.qr * 1000, 'g/kg'),
-            ('qi', self.qi * 1000, 'g/kg'),
-            ('qs', self.qs * 1000, 'g/kg'),
-            ('qg', self.qg * 1000, 'g/kg'),
-        ]:
-            v = ds.createVariable(name, 'f4', ('x', 'y', 'z'), zlib=True)
-            v[:] = data
-            v.units = units
+        # ============================================================
+        # Coordenada: y (metros, com latitude auxiliar)
+        # ============================================================
+        y_var = ds.createVariable('y', 'f4', ('y',))
+        y_var.units = 'm'
+        y_var.standard_name = 'projection_y_coordinate'
+        y_var.long_name = 'Y distance from domain center'
+        y_var.axis = 'Y'
+        y_var[:] = self.grid.y
         
-        # Perfis de referência
-        for name, data, units in [
-            ('T_bar', self.grid.T_bar_z, 'K'),
-            ('p_bar', self.grid.p_bar_z, 'Pa'),
-            ('rho_bar', self.grid.rho_bar_z, 'kg/m3'),
-            ('theta_rho_bar', self.grid.theta_rho_bar_z, 'K'),
-        ]:
-            v = ds.createVariable(name, 'f4', ('z',))
-            v[:] = data
-            v.units = units
+        # ============================================================
+        # Coordenada: x (metros, com longitude auxiliar)
+        # ============================================================
+        x_var = ds.createVariable('x', 'f4', ('x',))
+        x_var.units = 'm'
+        x_var.standard_name = 'projection_x_coordinate'
+        x_var.long_name = 'X distance from domain center'
+        x_var.axis = 'X'
+        x_var[:] = self.grid.x
         
-        # Séries temporais
-        for name, data, units in [
-            ('w_max_t', self.history['w_max'], 'm/s'),
-            ('qg_max_t', self.history['qg_max'], 'g/kg'),
-            ('convergence_max_t', self.history['convergence_max'], '1/s'),
-        ]:
-            v = ds.createVariable(name, 'f4', ('time',))
-            v[:] = data
-            v.units = units
+        # ============================================================
+        # Coordenadas auxiliares: lat/lon (IDV precisa para plotar)
+        # Centro: Vale do Revólver (-26.89, -49.37)
+        # ============================================================
+        lat_center = -26.89
+        lon_center = -49.37
         
-        # Atributos globais
-        ds.title = 'Toró Model 3D — Anelastic θ_ρ Simulation'
-        ds.model = '3D Anelastic with density potential temperature'
-        ds.location = f'{self.config.location.name}, {self.config.location.municipality}'
-        ds.grid = f'{self.nx}x{self.ny}x{self.nz}'
-        ds.dx = self.dx
-        ds.dy = self.dy
-        ds.dz = self.dz
-        ds.boundary = 'periodic (x,y), rigid (z)'
-        ds.coriolis = 'none'
-        ds.author = 'Reinaldo Haas, UFSC'
+        # Converter metros para graus (aproximação local)
+        deg_per_m_lat = 1.0 / 111320.0  # ~111 km por grau
+        deg_per_m_lon = 1.0 / (111320.0 * np.cos(np.radians(lat_center)))
+        
+        lat_1d = lat_center + (self.grid.y - self.grid.y.mean()) * deg_per_m_lat
+        lon_1d = lon_center + (self.grid.x - self.grid.x.mean()) * deg_per_m_lon
+        
+        # 2D lat/lon arrays para CF
+        lon_2d, lat_2d = np.meshgrid(lon_1d, lat_1d, indexing='ij')
+        
+        lat_var = ds.createVariable('latitude', 'f8', ('x', 'y'))
+        lat_var.units = 'degrees_north'
+        lat_var.standard_name = 'latitude'
+        lat_var.long_name = 'Latitude'
+        lat_var[:] = lat_2d
+        
+        lon_var = ds.createVariable('longitude', 'f8', ('x', 'y'))
+        lon_var.units = 'degrees_east'
+        lon_var.standard_name = 'longitude'
+        lon_var.long_name = 'Longitude'
+        lon_var[:] = lon_2d
+        
+        # ============================================================
+        # Grid mapping (projeção cartesiana genérica)
+        # ============================================================
+        crs = ds.createVariable('crs', 'i4')
+        crs.grid_mapping_name = 'latitude_longitude'
+        crs.semi_major_axis = 6378137.0
+        crs.inverse_flattening = 298.257223563
+        crs.longitude_of_prime_meridian = 0.0
+        
+        # ============================================================
+        # Campos 3D (estado final, snap t=600s)
+        # ============================================================
+        var_metadata = {
+            'u': {
+                'data': self.u,
+                'units': 'm s-1',
+                'standard_name': 'eastward_wind',
+                'long_name': 'Zonal wind component',
+            },
+            'v': {
+                'data': self.v,
+                'units': 'm s-1',
+                'standard_name': 'northward_wind',
+                'long_name': 'Meridional wind component',
+            },
+            'w': {
+                'data': self.w,
+                'units': 'm s-1',
+                'standard_name': 'upward_air_velocity',
+                'long_name': 'Vertical wind component',
+            },
+            'theta_rho': {
+                'data': self.theta_rho,
+                'units': 'K',
+                'long_name': 'Density potential temperature',
+            },
+            'p_prime': {
+                'data': self.p_prime,
+                'units': 'Pa',
+                'long_name': 'Pressure perturbation',
+            },
+            'qv': {
+                'data': self.qv * 1000,
+                'units': 'g kg-1',
+                'standard_name': 'humidity_mixing_ratio',
+                'long_name': 'Water vapor mixing ratio',
+            },
+            'qc': {
+                'data': self.qc * 1000,
+                'units': 'g kg-1',
+                'long_name': 'Cloud water mixing ratio',
+            },
+            'qr': {
+                'data': self.qr * 1000,
+                'units': 'g kg-1',
+                'long_name': 'Rain water mixing ratio',
+            },
+            'qi': {
+                'data': self.qi * 1000,
+                'units': 'g kg-1',
+                'long_name': 'Cloud ice mixing ratio',
+            },
+            'qs': {
+                'data': self.qs * 1000,
+                'units': 'g kg-1',
+                'long_name': 'Snow mixing ratio',
+            },
+            'qg': {
+                'data': self.qg * 1000,
+                'units': 'g kg-1',
+                'long_name': 'Graupel and hail mixing ratio',
+            },
+        }
+        
+        for vname, meta in var_metadata.items():
+            v = ds.createVariable(vname, 'f4', ('x', 'y', 'z'),
+                                  zlib=True, complevel=4)
+            v[:] = meta['data']
+            v.units = meta['units']
+            v.long_name = meta['long_name']
+            if 'standard_name' in meta:
+                v.standard_name = meta['standard_name']
+            v.coordinates = 'longitude latitude z'
+            v.grid_mapping = 'crs'
+        
+        # ============================================================
+        # Perfis de referência (1D em z)
+        # ============================================================
+        profile_metadata = {
+            'T_bar': {
+                'data': self.grid.T_bar_z,
+                'units': 'K',
+                'standard_name': 'air_temperature',
+                'long_name': 'Base state temperature profile',
+            },
+            'p_bar': {
+                'data': self.grid.p_bar_z,
+                'units': 'Pa',
+                'standard_name': 'air_pressure',
+                'long_name': 'Base state pressure profile',
+            },
+            'rho_bar': {
+                'data': self.grid.rho_bar_z,
+                'units': 'kg m-3',
+                'standard_name': 'air_density',
+                'long_name': 'Base state density profile',
+            },
+            'theta_rho_bar': {
+                'data': self.grid.theta_rho_bar_z,
+                'units': 'K',
+                'long_name': 'Base state density potential temperature',
+            },
+        }
+        
+        for vname, meta in profile_metadata.items():
+            v = ds.createVariable(vname, 'f4', ('z',))
+            v[:] = meta['data']
+            v.units = meta['units']
+            v.long_name = meta['long_name']
+            if 'standard_name' in meta:
+                v.standard_name = meta['standard_name']
+        
+        # ============================================================
+        # Séries temporais (1D em time)
+        # ============================================================
+        ts_metadata = {
+            'w_max_t': {
+                'data': self.history['w_max'],
+                'units': 'm s-1',
+                'long_name': 'Maximum updraft velocity',
+            },
+            'qg_max_t': {
+                'data': self.history['qg_max'],
+                'units': 'g kg-1',
+                'long_name': 'Maximum graupel mixing ratio',
+            },
+            'convergence_max_t': {
+                'data': self.history['convergence_max'],
+                'units': 's-1',
+                'long_name': 'Maximum horizontal convergence',
+            },
+        }
+        
+        for vname, meta in ts_metadata.items():
+            v = ds.createVariable(vname, 'f4', ('time',))
+            v[:] = meta['data']
+            v.units = meta['units']
+            v.long_name = meta['long_name']
         
         ds.close()
-        print(f"  NetCDF salvo: {filepath}")
+        print(f"  NetCDF CF-1.6 salvo: {filepath}")
+
