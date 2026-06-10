@@ -1,0 +1,1129 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Toró 3D — Modelo Conceitual Interativo</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #0a0e1a;
+            color: #e0e4f0;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+        }
+
+        #canvas-container {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+
+        /* HUD Overlay */
+        #hud {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        #hud > * { pointer-events: auto; }
+
+        /* Title */
+        .title-bar {
+            position: absolute;
+            top: 20px; left: 50%;
+            transform: translateX(-50%);
+            text-align: center;
+            background: rgba(10, 14, 26, 0.85);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(100, 140, 255, 0.2);
+            border-radius: 16px;
+            padding: 14px 32px;
+        }
+
+        .title-bar h1 {
+            font-size: 1.3rem;
+            font-weight: 600;
+            background: linear-gradient(135deg, #60a5fa, #a78bfa, #f472b6);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: 0.5px;
+        }
+
+        .title-bar .subtitle {
+            font-size: 0.75rem;
+            color: #8892b0;
+            margin-top: 4px;
+            font-weight: 300;
+        }
+
+        /* Phase Controls */
+        .phase-panel {
+            position: absolute;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 6px;
+            background: rgba(10, 14, 26, 0.9);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(100, 140, 255, 0.15);
+            border-radius: 14px;
+            padding: 10px 16px;
+        }
+
+        .phase-btn {
+            background: rgba(100, 140, 255, 0.08);
+            border: 1px solid rgba(100, 140, 255, 0.15);
+            color: #8892b0;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.7rem;
+            font-weight: 500;
+            padding: 8px 14px;
+            border-radius: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+            white-space: nowrap;
+        }
+
+        .phase-btn:hover {
+            background: rgba(100, 140, 255, 0.15);
+            border-color: rgba(100, 140, 255, 0.4);
+            color: #c0c8e0;
+        }
+
+        .phase-btn.active {
+            background: linear-gradient(135deg, rgba(96, 165, 250, 0.25), rgba(167, 139, 250, 0.25));
+            border-color: rgba(96, 165, 250, 0.5);
+            color: #ffffff;
+            box-shadow: 0 0 20px rgba(96, 165, 250, 0.15);
+        }
+
+        /* Info Panel */
+        .info-panel {
+            position: absolute;
+            top: 100px; right: 20px;
+            width: 280px;
+            background: rgba(10, 14, 26, 0.9);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(100, 140, 255, 0.15);
+            border-radius: 14px;
+            padding: 18px;
+        }
+
+        .info-panel h3 {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #60a5fa;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .info-panel h3 .phase-num {
+            background: linear-gradient(135deg, #60a5fa, #a78bfa);
+            color: #0a0e1a;
+            width: 22px; height: 22px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            font-weight: 700;
+        }
+
+        .info-panel p {
+            font-size: 0.72rem;
+            line-height: 1.6;
+            color: #8892b0;
+        }
+
+        .info-panel .param {
+            display: flex;
+            justify-content: space-between;
+            padding: 4px 0;
+            border-bottom: 1px solid rgba(100, 140, 255, 0.06);
+        }
+
+        .info-panel .param .label {
+            font-size: 0.68rem;
+            color: #6b7394;
+        }
+
+        .info-panel .param .value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.68rem;
+            color: #a78bfa;
+            font-weight: 500;
+        }
+
+        .params-grid { margin-top: 10px; }
+
+        /* Legend */
+        .legend {
+            position: absolute;
+            top: 100px; left: 20px;
+            background: rgba(10, 14, 26, 0.9);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(100, 140, 255, 0.15);
+            border-radius: 14px;
+            padding: 14px 18px;
+            font-size: 0.68rem;
+        }
+
+        .legend h4 {
+            font-size: 0.75rem;
+            color: #60a5fa;
+            margin-bottom: 8px;
+            font-weight: 600;
+        }
+
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 5px 0;
+            color: #8892b0;
+        }
+
+        .legend-dot {
+            width: 10px; height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+        }
+
+        /* Autoplay */
+        .autoplay-btn {
+            position: absolute;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(96, 165, 250, 0.15);
+            border: 1px solid rgba(96, 165, 250, 0.3);
+            color: #60a5fa;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.72rem;
+            padding: 8px 20px;
+            border-radius: 20px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .autoplay-btn:hover {
+            background: rgba(96, 165, 250, 0.25);
+        }
+
+        /* Loading */
+        #loading {
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: #0a0e1a;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 100;
+            transition: opacity 0.5s;
+        }
+
+        #loading .spinner {
+            width: 40px; height: 40px;
+            border: 3px solid rgba(96, 165, 250, 0.2);
+            border-top: 3px solid #60a5fa;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div id="loading"><div class="spinner"></div></div>
+    <div id="canvas-container"></div>
+    <div id="hud">
+        <div class="title-bar">
+            <h1>MODELO TORÓ 3D — Visualização Conceitual</h1>
+            <div class="subtitle">Anelástico θ_ρ · Vale do Revólver, Presidente Getúlio, SC</div>
+        </div>
+
+        <div class="legend" id="legend">
+            <h4>Legenda</h4>
+            <div class="legend-item"><div class="legend-dot" style="background:#4fc3f7"></div>Gotículas de nuvem (q_c)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#e040fb"></div>Graupel/granizo (q_g)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#69f0ae"></div>Vento convergente</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#ff5252"></div>Vórtice (tornado)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#ffd740"></div>Zona H-M (−3 a −8°C)</div>
+            <div class="legend-item"><div class="legend-dot" style="background:#ff6e40"></div>Impacto / erosão</div>
+        </div>
+
+        <div class="info-panel" id="info-panel"></div>
+
+        <button class="autoplay-btn" id="autoplay-btn" onclick="toggleAutoplay()">▶ Reproduzir Animação</button>
+
+        <div class="phase-panel">
+            <button class="phase-btn active" onclick="setPhase(1)">1 · Supercélula</button>
+            <button class="phase-btn" onclick="setPhase(2)">2 · Vórtice</button>
+            <button class="phase-btn" onclick="setPhase(3)">3 · SIP Explosivo</button>
+            <button class="phase-btn" onclick="setPhase(4)">4 · Pistão</button>
+            <button class="phase-btn" onclick="setPhase(5)">5 · Colapso</button>
+            <button class="phase-btn" onclick="setPhase(6)">6 · Impacto</button>
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+    // =========================================================================
+    // Toró 3D Visualization
+    // =========================================================================
+
+    let scene, camera, renderer, clock;
+    let currentPhase = 1;
+    let autoplayActive = false;
+    let autoplayTimer = null;
+    let animTime = 0;
+
+    // Groups for each visual element
+    let terrainGroup, cloudGroup, tornadoGroup, pistonGroup;
+    let convergenceGroup, impactGroup, hmZoneGroup;
+    let rainParticles, iceParticles, splinterParticles;
+
+    // Phase info data
+    const phaseInfo = {
+        1: {
+            title: "Supercélula em Decaimento",
+            num: "1",
+            desc: "A supercélula com DSD estreita (μ≈20) entra na fase de decaimento sobre o desfiladeiro. Nuvens baixas e iridescentes. Updraft vigoroso sustenta enorme coluna de água superesfriada.",
+            params: [
+                ["CAPE", "2500 J/kg"],
+                ["T_sfc", "300 K (27°C)"],
+                ["RH_sfc", "85%"],
+                ["z_LCL", "1000 m"],
+                ["z_freezing", "4000 m"],
+                ["w_max", "50 m/s"],
+            ]
+        },
+        2: {
+            title: "Injeção pelo Vórtice",
+            num: "2",
+            desc: "O cisalhamento gera um vórtice (tornado/tromba d'água) que injeta INPs da superfície na nuvem superesfriada. O vórtice conecta a superfície à base da nuvem como um tubo de sucção.",
+            params: [
+                ["V_tang", "70 m/s (EF2-3)"],
+                ["R_max", "150 m"],
+                ["du/dz", "3×10⁻³ s⁻¹"],
+                ["Convergência", "5 m/s"],
+                ["INPs injetados", "~10⁴ L⁻¹"],
+                ["Updraft", "30+ m/s"],
+            ]
+        },
+        3: {
+            title: "SIP Explosivo (H-M + Phillips)",
+            num: "3",
+            desc: "Na zona Hallett-Mossop (−3 a −8°C), o riming dispara produção explosiva de gelo secundário: 350 splinters/mg. Cascata de multiplicação exponencial de partículas de gelo.",
+            params: [
+                ["H-M taxa", "350 splinters/mg"],
+                ["H-M zona", "−3 a −8°C"],
+                ["H-M pico", "−5°C"],
+                ["Phillips pico", "−15°C"],
+                ["D_splinter", "10 μm"],
+                ["q_i multiplicação", "exponencial"],
+            ]
+        },
+        4: {
+            title: "Formação do Pistão",
+            num: "4",
+            desc: "A massa de graupel/granizo atinge milhares de toneladas. O feedback de pressão (Poisson: p'<0 → convergência) auto-concentra a coluna em um pistão semi-rígido coerente.",
+            params: [
+                ["M_piston", "2241 ton"],
+                ["q_g,max", "2.1 g/kg"],
+                ["q_c,max", "8.0 g/kg"],
+                ["ρ_mix", "500 kg/m³"],
+                ["Feedback", "p'<0 → conv."],
+                ["H_piston", "10.5 km"],
+            ]
+        },
+        5: {
+            title: "Colapso Catastrófico",
+            num: "5",
+            desc: "Quando M·g supera o suporte do updraft, o pistão colapsa coerentemente — como uma prensa hidráulica, não como chuva dispersa. Queda quase-livre canalizada pelo desfiladeiro.",
+            params: [
+                ["v_terminal", "19.7 m/s"],
+                ["v_impact", "19.7 m/s"],
+                ["z_start", "4000 m"],
+                ["C_d", "1.0"],
+                ["A_cross", "125,664 m²"],
+                ["E_cinética", "4.36×10⁸ J"],
+            ]
+        },
+        6: {
+            title: "Impacto — O \"Tó\"",
+            num: "6",
+            desc: "O impacto gera o som \"Tó\" (vagão desgovernado), tremor sísmico M_L 3.7, e erosão linear sem barro — a assinatura diagnóstica do Toró.",
+            params: [
+                ["P_impact", "4.9 MPa"],
+                ["SPL 1km", "187.8 dB"],
+                ["M_L (Richter)", "3.72"],
+                ["M_erodida", "10 ton"],
+                ["Barro residual", "0%"],
+                ["Som", "\"Tó\" (1-2000 Hz)"],
+            ]
+        }
+    };
+
+    function init() {
+        // Scene
+        scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x0a0e1a, 0.00015);
+        clock = new THREE.Clock();
+
+        // Camera
+        camera = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 1, 50000);
+        camera.position.set(8000, 5000, 8000);
+        camera.lookAt(0, 3000, 0);
+
+        // Renderer
+        renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.shadowMap.enabled = true;
+        renderer.toneMapping = THREE.ACESFilmicToneMapping;
+        renderer.toneMappingExposure = 1.2;
+        document.getElementById('canvas-container').appendChild(renderer.domElement);
+
+        // Lights
+        const ambientLight = new THREE.AmbientLight(0x1a1a3a, 0.4);
+        scene.add(ambientLight);
+
+        const dirLight = new THREE.DirectionalLight(0x8090cc, 0.6);
+        dirLight.position.set(5000, 10000, 3000);
+        scene.add(dirLight);
+
+        const pointLight = new THREE.PointLight(0x60a5fa, 0.8, 20000);
+        pointLight.position.set(0, 8000, 0);
+        scene.add(pointLight);
+
+        // Groups
+        terrainGroup = new THREE.Group();
+        cloudGroup = new THREE.Group();
+        tornadoGroup = new THREE.Group();
+        pistonGroup = new THREE.Group();
+        convergenceGroup = new THREE.Group();
+        impactGroup = new THREE.Group();
+        hmZoneGroup = new THREE.Group();
+
+        scene.add(terrainGroup, cloudGroup, tornadoGroup, pistonGroup,
+                  convergenceGroup, impactGroup, hmZoneGroup);
+
+        createTerrain();
+        createDomainBox();
+        createCloudBase();
+        createTornado();
+        createHMZone();
+        createPiston();
+        createConvergenceArrows();
+        createImpactZone();
+        createParticles();
+        createPressureField();
+        createTemperatureLabels();
+
+        // Mouse controls (simple orbit)
+        setupOrbitControls();
+
+        // Initial phase
+        setPhase(1);
+
+        // Remove loading
+        setTimeout(() => {
+            document.getElementById('loading').style.opacity = '0';
+            setTimeout(() => document.getElementById('loading').style.display = 'none', 500);
+        }, 800);
+
+        animate();
+    }
+
+    // =========================================================================
+    // Terrain — Canyon (Vale do Revólver)
+    // =========================================================================
+    function createTerrain() {
+        // Ground plane
+        const groundGeo = new THREE.PlaneGeometry(20000, 20000, 60, 60);
+        groundGeo.rotateX(-Math.PI / 2);
+
+        // Add canyon-like deformation
+        const pos = groundGeo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+            const x = pos.getX(i);
+            const z = pos.getZ(i);
+            // Canyon in center
+            const distFromCenter = Math.sqrt(x * x + z * z);
+            const canyonDepth = Math.exp(-distFromCenter * distFromCenter / (800 * 800)) * -300;
+            // Rolling hills
+            const hills = Math.sin(x * 0.0008) * Math.cos(z * 0.0006) * 200 +
+                          Math.sin(x * 0.002 + 1) * Math.cos(z * 0.0015) * 80;
+            pos.setY(i, hills + canyonDepth);
+        }
+        groundGeo.computeVertexNormals();
+
+        const groundMat = new THREE.MeshPhongMaterial({
+            color: 0x1a3322,
+            specular: 0x111111,
+            shininess: 5,
+            flatShading: true,
+        });
+        const ground = new THREE.Mesh(groundGeo, groundMat);
+        ground.receiveShadow = true;
+        terrainGroup.add(ground);
+
+        // Water in canyon
+        const waterGeo = new THREE.CircleGeometry(600, 32);
+        waterGeo.rotateX(-Math.PI / 2);
+        const waterMat = new THREE.MeshPhongMaterial({
+            color: 0x1a4466,
+            transparent: true,
+            opacity: 0.7,
+            specular: 0x4488aa,
+            shininess: 80,
+        });
+        const water = new THREE.Mesh(waterGeo, waterMat);
+        water.position.y = -250;
+        terrainGroup.add(water);
+    }
+
+    // =========================================================================
+    // Domain box outline
+    // =========================================================================
+    function createDomainBox() {
+        const boxGeo = new THREE.BoxGeometry(10000, 15000, 10000);
+        const edges = new THREE.EdgesGeometry(boxGeo);
+        const lineMat = new THREE.LineBasicMaterial({
+            color: 0x2a3050,
+            transparent: true,
+            opacity: 0.3
+        });
+        const box = new THREE.LineSegments(edges, lineMat);
+        box.position.y = 7500;
+        scene.add(box);
+
+        // Height labels
+        const heights = [0, 4000, 8000, 12000, 15000];
+        heights.forEach(h => {
+            const ringGeo = new THREE.RingGeometry(5200, 5300, 4);
+            ringGeo.rotateX(-Math.PI / 2);
+            const ringMat = new THREE.LineBasicMaterial({
+                color: 0x1a2040,
+                transparent: true,
+                opacity: 0.15
+            });
+            const ring = new THREE.LineSegments(new THREE.EdgesGeometry(ringGeo), ringMat);
+            ring.position.y = h;
+            scene.add(ring);
+        });
+    }
+
+    // =========================================================================
+    // Cloud base (anvil shape)
+    // =========================================================================
+    function createCloudBase() {
+        // Main cloud mass — layered discs at different heights
+        const layers = [
+            { y: 1500, r: 4000, h: 800, opacity: 0.12, color: 0x4a5a8a },
+            { y: 3000, r: 3500, h: 1000, opacity: 0.15, color: 0x5a6a9a },
+            { y: 5000, r: 3000, h: 1200, opacity: 0.18, color: 0x6a7aaa },
+            { y: 7000, r: 2500, h: 1500, opacity: 0.15, color: 0x7a8aba },
+            { y: 9000, r: 2000, h: 1000, opacity: 0.12, color: 0x8a9aca },
+            { y: 11000, r: 3500, h: 500, opacity: 0.1, color: 0x9aaaca }, // Anvil top
+        ];
+
+        layers.forEach(l => {
+            const geo = new THREE.CylinderGeometry(l.r, l.r * 0.9, l.h, 24, 1);
+            const mat = new THREE.MeshPhongMaterial({
+                color: l.color,
+                transparent: true,
+                opacity: l.opacity,
+                side: THREE.DoubleSide,
+            });
+            const mesh = new THREE.Mesh(geo, mat);
+            mesh.position.y = l.y;
+            cloudGroup.add(mesh);
+        });
+
+        // Iridescent shimmer on cloud base (phase 1 highlight)
+        const iriGeo = new THREE.RingGeometry(100, 4000, 32);
+        iriGeo.rotateX(-Math.PI / 2);
+        const iriMat = new THREE.MeshPhongMaterial({
+            color: 0x8060ff,
+            transparent: true,
+            opacity: 0.06,
+            emissive: 0x6040cc,
+            emissiveIntensity: 0.3,
+            side: THREE.DoubleSide,
+        });
+        const iri = new THREE.Mesh(iriGeo, iriMat);
+        iri.position.y = 1200;
+        iri.name = 'iridescence';
+        cloudGroup.add(iri);
+    }
+
+    // =========================================================================
+    // Tornado vortex
+    // =========================================================================
+    function createTornado() {
+        // Funnel — cone shape from surface to cloud base
+        const points = [];
+        const segments = 40;
+        for (let i = 0; i <= segments; i++) {
+            const t = i / segments;
+            const y = t * 4000;
+            // Width: narrow at surface, wider at cloud base
+            const r = 50 + t * t * 400;
+            points.push(new THREE.Vector2(r, y));
+        }
+
+        const funnelGeo = new THREE.LatheGeometry(points, 24);
+        const funnelMat = new THREE.MeshPhongMaterial({
+            color: 0x8a9ab0,
+            transparent: true,
+            opacity: 0.25,
+            side: THREE.DoubleSide,
+            emissive: 0x334466,
+            emissiveIntensity: 0.2,
+        });
+        const funnel = new THREE.Mesh(funnelGeo, funnelMat);
+        funnel.name = 'funnel';
+        tornadoGroup.add(funnel);
+
+        // Rotation lines (helical streaks)
+        for (let i = 0; i < 6; i++) {
+            const helixPoints = [];
+            const offset = (i / 6) * Math.PI * 2;
+            for (let j = 0; j <= 100; j++) {
+                const t = j / 100;
+                const y = t * 4000;
+                const r = 60 + t * t * 420;
+                const angle = offset + t * 12;
+                helixPoints.push(new THREE.Vector3(
+                    r * Math.cos(angle),
+                    y,
+                    r * Math.sin(angle)
+                ));
+            }
+            const helixGeo = new THREE.BufferGeometry().setFromPoints(helixPoints);
+            const helixMat = new THREE.LineBasicMaterial({
+                color: 0xff5252,
+                transparent: true,
+                opacity: 0.5,
+            });
+            const helix = new THREE.Line(helixGeo, helixMat);
+            helix.name = 'helix_' + i;
+            tornadoGroup.add(helix);
+        }
+
+        // Debris cloud at base
+        const debrisGeo = new THREE.SphereGeometry(200, 16, 8);
+        const debrisMat = new THREE.MeshPhongMaterial({
+            color: 0x5a4a3a,
+            transparent: true,
+            opacity: 0.3,
+            emissive: 0x3a2a1a,
+        });
+        const debris = new THREE.Mesh(debrisGeo, debrisMat);
+        debris.position.y = 100;
+        debris.scale.y = 0.4;
+        tornadoGroup.add(debris);
+    }
+
+    // =========================================================================
+    // Hallett-Mossop Zone (−3 to −8°C band)
+    // =========================================================================
+    function createHMZone() {
+        // Yellow band between z ≈ 4250m and z ≈ 4750m
+        const hmGeo = new THREE.CylinderGeometry(1800, 1800, 500, 24, 1, true);
+        const hmMat = new THREE.MeshPhongMaterial({
+            color: 0xffd740,
+            transparent: true,
+            opacity: 0.08,
+            side: THREE.DoubleSide,
+            emissive: 0xffaa00,
+            emissiveIntensity: 0.15,
+        });
+        const hm = new THREE.Mesh(hmGeo, hmMat);
+        hm.position.y = 4500;
+        hmZoneGroup.add(hm);
+
+        // Label ring
+        const ringGeo = new THREE.TorusGeometry(1800, 3, 4, 32);
+        const ringMat = new THREE.MeshBasicMaterial({ color: 0xffd740, transparent: true, opacity: 0.4 });
+        const ringTop = new THREE.Mesh(ringGeo, ringMat);
+        ringTop.position.y = 4750;
+        ringTop.rotation.x = Math.PI / 2;
+        hmZoneGroup.add(ringTop);
+
+        const ringBottom = ringTop.clone();
+        ringBottom.position.y = 4250;
+        hmZoneGroup.add(ringBottom);
+    }
+
+    // =========================================================================
+    // Piston (hydrometeor column)
+    // =========================================================================
+    function createPiston() {
+        // Dense column of ice/water
+        const pistonGeo = new THREE.CylinderGeometry(350, 300, 8000, 16, 20);
+        const pistonMat = new THREE.MeshPhongMaterial({
+            color: 0x6040cc,
+            transparent: true,
+            opacity: 0.2,
+            emissive: 0x4020aa,
+            emissiveIntensity: 0.3,
+            side: THREE.DoubleSide,
+        });
+        const piston = new THREE.Mesh(pistonGeo, pistonMat);
+        piston.position.y = 5000;
+        piston.name = 'piston-core';
+        pistonGroup.add(piston);
+
+        // Outer glow
+        const glowGeo = new THREE.CylinderGeometry(500, 450, 8000, 16, 1, true);
+        const glowMat = new THREE.MeshPhongMaterial({
+            color: 0x4080ff,
+            transparent: true,
+            opacity: 0.05,
+            side: THREE.DoubleSide,
+        });
+        const glow = new THREE.Mesh(glowGeo, glowMat);
+        glow.position.y = 5000;
+        pistonGroup.add(glow);
+    }
+
+    // =========================================================================
+    // Convergence arrows
+    // =========================================================================
+    function createConvergenceArrows() {
+        const arrowCount = 16;
+        for (let i = 0; i < arrowCount; i++) {
+            const angle = (i / arrowCount) * Math.PI * 2;
+            const r = 3500;
+
+            // Arrow body (line from outside pointing to center)
+            const start = new THREE.Vector3(
+                r * Math.cos(angle), 800,
+                r * Math.sin(angle)
+            );
+            const end = new THREE.Vector3(
+                800 * Math.cos(angle), 800,
+                800 * Math.sin(angle)
+            );
+
+            const points = [start, end];
+            const geo = new THREE.BufferGeometry().setFromPoints(points);
+            const mat = new THREE.LineBasicMaterial({
+                color: 0x69f0ae,
+                transparent: true,
+                opacity: 0.6,
+            });
+            const line = new THREE.Line(geo, mat);
+            convergenceGroup.add(line);
+
+            // Arrowhead
+            const dir = end.clone().sub(start).normalize();
+            const arrowLen = 200;
+            const headGeo = new THREE.ConeGeometry(40, arrowLen, 6);
+            const headMat = new THREE.MeshBasicMaterial({
+                color: 0x69f0ae,
+                transparent: true,
+                opacity: 0.7,
+            });
+            const head = new THREE.Mesh(headGeo, headMat);
+            head.position.copy(end);
+            head.lookAt(start);
+            head.rotateX(Math.PI / 2);
+            convergenceGroup.add(head);
+        }
+    }
+
+    // =========================================================================
+    // Impact zone
+    // =========================================================================
+    function createImpactZone() {
+        // Impact crater ring
+        const craterGeo = new THREE.TorusGeometry(400, 30, 8, 32);
+        const craterMat = new THREE.MeshPhongMaterial({
+            color: 0xff6e40,
+            emissive: 0xff4400,
+            emissiveIntensity: 0.5,
+            transparent: true,
+            opacity: 0.7,
+        });
+        const crater = new THREE.Mesh(craterGeo, craterMat);
+        crater.rotation.x = Math.PI / 2;
+        crater.position.y = 5;
+        impactGroup.add(crater);
+
+        // Shockwave rings
+        for (let i = 1; i <= 4; i++) {
+            const ringGeo = new THREE.TorusGeometry(400 + i * 300, 5, 4, 48);
+            const ringMat = new THREE.MeshBasicMaterial({
+                color: 0xff8a65,
+                transparent: true,
+                opacity: 0.3 / i,
+            });
+            const ring = new THREE.Mesh(ringGeo, ringMat);
+            ring.rotation.x = Math.PI / 2;
+            ring.position.y = 5;
+            ring.name = 'shockwave_' + i;
+            impactGroup.add(ring);
+        }
+
+        // Erosion scar (linear)
+        const scarGeo = new THREE.BoxGeometry(800, 20, 200);
+        const scarMat = new THREE.MeshPhongMaterial({
+            color: 0x6a5a4a,
+            emissive: 0x4a3a2a,
+            emissiveIntensity: 0.3,
+        });
+        const scar = new THREE.Mesh(scarGeo, scarMat);
+        scar.position.y = -5;
+        impactGroup.add(scar);
+    }
+
+    // =========================================================================
+    // Particles (rain, ice, splinters)
+    // =========================================================================
+    function createParticles() {
+        // Cloud water particles (blue)
+        rainParticles = createParticleSystem(3000, 0x4fc3f7, 3, 800, 1500, 9000);
+
+        // Ice/graupel particles (purple)
+        iceParticles = createParticleSystem(2000, 0xe040fb, 4, 500, 3000, 10000);
+
+        // SIP splinters (bright cyan, small)
+        splinterParticles = createParticleSystem(1500, 0x00e5ff, 2, 1200, 4000, 5000);
+
+        scene.add(rainParticles, iceParticles, splinterParticles);
+    }
+
+    function createParticleSystem(count, color, size, spread, yMin, yMax) {
+        const positions = new Float32Array(count * 3);
+        for (let i = 0; i < count; i++) {
+            const angle = Math.random() * Math.PI * 2;
+            const r = Math.random() * spread;
+            positions[i * 3] = r * Math.cos(angle);
+            positions[i * 3 + 1] = yMin + Math.random() * (yMax - yMin);
+            positions[i * 3 + 2] = r * Math.sin(angle);
+        }
+        const geo = new THREE.BufferGeometry();
+        geo.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const mat = new THREE.PointsMaterial({
+            color: color,
+            size: size,
+            transparent: true,
+            opacity: 0.6,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false,
+        });
+        return new THREE.Points(geo, mat);
+    }
+
+    // =========================================================================
+    // Pressure field visualization (p' < 0 above piston)
+    // =========================================================================
+    function createPressureField() {
+        // Concentric pressure isobars above the piston
+        for (let i = 0; i < 5; i++) {
+            const r = 600 + i * 300;
+            const y = 6000 + i * 500;
+            const torusGeo = new THREE.TorusGeometry(r, 2, 4, 48);
+            const torusMat = new THREE.MeshBasicMaterial({
+                color: 0x4060ff,
+                transparent: true,
+                opacity: 0.15 - i * 0.02,
+            });
+            const torus = new THREE.Mesh(torusGeo, torusMat);
+            torus.rotation.x = Math.PI / 2;
+            torus.position.y = y;
+            torus.name = 'pressure_' + i;
+            pistonGroup.add(torus);
+        }
+    }
+
+    // =========================================================================
+    // Temperature labels on the side
+    // =========================================================================
+    function createTemperatureLabels() {
+        const levels = [
+            { y: 0, label: '0m · 27°C' },
+            { y: 4000, label: '4km · 0°C ❄' },
+            { y: 4500, label: '4.5km · −5°C (H-M peak)' },
+            { y: 8000, label: '8km · −25°C' },
+            { y: 12000, label: '12km · tropopausa' },
+        ];
+
+        levels.forEach(l => {
+            const dashGeo = new THREE.BufferGeometry().setFromPoints([
+                new THREE.Vector3(-5200, l.y, 0),
+                new THREE.Vector3(-5500, l.y, 0)
+            ]);
+            const dashMat = new THREE.LineBasicMaterial({
+                color: 0x3a4a6a,
+                transparent: true,
+                opacity: 0.4,
+            });
+            scene.add(new THREE.Line(dashGeo, dashMat));
+        });
+    }
+
+    // =========================================================================
+    // Orbit controls (simple mouse drag)
+    // =========================================================================
+    function setupOrbitControls() {
+        let isDragging = false;
+        let prevX, prevY;
+        let phi = 0.6, theta = 0.8, radius = 12000;
+
+        function updateCamera() {
+            camera.position.x = radius * Math.sin(phi) * Math.cos(theta);
+            camera.position.y = radius * Math.sin(theta) + 3000;
+            camera.position.z = radius * Math.cos(phi) * Math.cos(theta);
+            camera.lookAt(0, 3500, 0);
+        }
+
+        renderer.domElement.addEventListener('mousedown', e => {
+            isDragging = true;
+            prevX = e.clientX;
+            prevY = e.clientY;
+        });
+
+        renderer.domElement.addEventListener('mousemove', e => {
+            if (!isDragging) return;
+            const dx = e.clientX - prevX;
+            const dy = e.clientY - prevY;
+            phi += dx * 0.005;
+            theta = Math.max(0.05, Math.min(1.4, theta - dy * 0.005));
+            prevX = e.clientX;
+            prevY = e.clientY;
+            updateCamera();
+        });
+
+        renderer.domElement.addEventListener('mouseup', () => isDragging = false);
+        renderer.domElement.addEventListener('mouseleave', () => isDragging = false);
+
+        renderer.domElement.addEventListener('wheel', e => {
+            radius = Math.max(5000, Math.min(25000, radius + e.deltaY * 5));
+            updateCamera();
+        });
+
+        // Touch support
+        renderer.domElement.addEventListener('touchstart', e => {
+            if (e.touches.length === 1) {
+                isDragging = true;
+                prevX = e.touches[0].clientX;
+                prevY = e.touches[0].clientY;
+            }
+        });
+        renderer.domElement.addEventListener('touchmove', e => {
+            if (!isDragging || e.touches.length !== 1) return;
+            const dx = e.touches[0].clientX - prevX;
+            const dy = e.touches[0].clientY - prevY;
+            phi += dx * 0.005;
+            theta = Math.max(0.05, Math.min(1.4, theta - dy * 0.005));
+            prevX = e.touches[0].clientX;
+            prevY = e.touches[0].clientY;
+            updateCamera();
+        });
+        renderer.domElement.addEventListener('touchend', () => isDragging = false);
+
+        updateCamera();
+    }
+
+    // =========================================================================
+    // Phase switching
+    // =========================================================================
+    function setPhase(phase) {
+        currentPhase = phase;
+
+        // Update buttons
+        document.querySelectorAll('.phase-btn').forEach((btn, i) => {
+            btn.classList.toggle('active', i + 1 === phase);
+        });
+
+        // Update info panel
+        const info = phaseInfo[phase];
+        let html = `<h3><span class="phase-num">${info.num}</span>${info.title}</h3>`;
+        html += `<p>${info.desc}</p>`;
+        html += '<div class="params-grid">';
+        info.params.forEach(p => {
+            html += `<div class="param"><span class="label">${p[0]}</span><span class="value">${p[1]}</span></div>`;
+        });
+        html += '</div>';
+        document.getElementById('info-panel').innerHTML = html;
+
+        // Visibility by phase
+        const showTornado = phase >= 2;
+        const showHM = phase >= 3;
+        const showPiston = phase >= 4;
+        const showCollapse = phase >= 5;
+        const showImpact = phase >= 6;
+
+        tornadoGroup.visible = showTornado;
+        hmZoneGroup.visible = showHM;
+        pistonGroup.visible = showPiston;
+        impactGroup.visible = showImpact;
+        convergenceGroup.visible = phase >= 2 && phase <= 5;
+
+        // Particle visibility
+        rainParticles.visible = phase >= 1;
+        iceParticles.visible = phase >= 3;
+        splinterParticles.visible = phase === 3 || phase === 4;
+
+        // Cloud opacity adjusts
+        cloudGroup.children.forEach(c => {
+            if (c.material && c.name !== 'iridescence') {
+                c.material.opacity = phase <= 2 ? c.material.opacity : c.material.opacity * 0.8;
+            }
+        });
+
+        // Piston animation state for collapse
+        if (pistonGroup.children[0]) {
+            pistonGroup.children[0].position.y = showCollapse ? 2000 : 5000;
+        }
+    }
+
+    // =========================================================================
+    // Autoplay
+    // =========================================================================
+    function toggleAutoplay() {
+        autoplayActive = !autoplayActive;
+        const btn = document.getElementById('autoplay-btn');
+
+        if (autoplayActive) {
+            btn.textContent = '⏸ Pausar Animação';
+            btn.style.borderColor = 'rgba(244, 114, 182, 0.5)';
+            btn.style.color = '#f472b6';
+            currentPhase = 0;
+            nextPhase();
+        } else {
+            btn.textContent = '▶ Reproduzir Animação';
+            btn.style.borderColor = 'rgba(96, 165, 250, 0.3)';
+            btn.style.color = '#60a5fa';
+            if (autoplayTimer) clearTimeout(autoplayTimer);
+        }
+    }
+
+    function nextPhase() {
+        if (!autoplayActive) return;
+        currentPhase = (currentPhase % 6) + 1;
+        setPhase(currentPhase);
+        autoplayTimer = setTimeout(nextPhase, 4000);
+    }
+
+    // =========================================================================
+    // Animation loop
+    // =========================================================================
+    function animate() {
+        requestAnimationFrame(animate);
+        const dt = clock.getDelta();
+        animTime += dt;
+
+        // Rotate tornado
+        if (tornadoGroup.visible) {
+            tornadoGroup.rotation.y += dt * 2.0;
+        }
+
+        // Animate particles (fall)
+        [rainParticles, iceParticles, splinterParticles].forEach((ps, idx) => {
+            if (!ps.visible) return;
+            const positions = ps.geometry.attributes.position;
+            const fallSpeed = [3, 8, 1][idx]; // cloud, graupel, splinters
+            const yMin = [1500, 3000, 4000][idx];
+            const yMax = [9000, 10000, 5000][idx];
+
+            for (let i = 0; i < positions.count; i++) {
+                let y = positions.getY(i);
+                y -= fallSpeed * dt * 100;
+                if (y < yMin) y = yMax;
+
+                // In collapse phase, accelerate graupel fall
+                if (currentPhase >= 5 && idx === 1) {
+                    y -= 30 * dt * 100;
+                    if (y < 0) y = yMax;
+                }
+
+                positions.setY(i, y);
+
+                // Slight swirl
+                const x = positions.getX(i);
+                const z = positions.getZ(i);
+                const angle = Math.atan2(z, x) + dt * 0.3;
+                const r = Math.sqrt(x * x + z * z);
+                positions.setX(i, r * Math.cos(angle));
+                positions.setZ(i, r * Math.sin(angle));
+            }
+            positions.needsUpdate = true;
+        });
+
+        // Pulse HM zone
+        if (hmZoneGroup.visible) {
+            const pulse = 0.08 + Math.sin(animTime * 3) * 0.04;
+            hmZoneGroup.children[0].material.opacity = pulse;
+        }
+
+        // Pulse impact
+        if (impactGroup.visible) {
+            impactGroup.children.forEach(c => {
+                if (c.name && c.name.startsWith('shockwave_')) {
+                    const i = parseInt(c.name.split('_')[1]);
+                    const scale = 1 + Math.sin(animTime * 2 - i * 0.5) * 0.15;
+                    c.scale.set(scale, scale, 1);
+                }
+            });
+        }
+
+        // Piston pulse
+        if (pistonGroup.visible) {
+            const core = pistonGroup.children[0];
+            if (core) {
+                const pulse = 0.2 + Math.sin(animTime * 2) * 0.05;
+                core.material.opacity = pulse;
+            }
+
+            // Pressure rings pulse
+            pistonGroup.children.forEach(c => {
+                if (c.name && c.name.startsWith('pressure_')) {
+                    const i = parseInt(c.name.split('_')[1]);
+                    const scale = 1 + Math.sin(animTime * 1.5 + i) * 0.1;
+                    c.scale.set(scale, 1, scale);
+                }
+            });
+        }
+
+        // Cloud iridescence shimmer
+        const iri = cloudGroup.getObjectByName('iridescence');
+        if (iri) {
+            const hue = (animTime * 0.1) % 1;
+            iri.material.color.setHSL(hue, 0.7, 0.5);
+            iri.material.emissive.setHSL(hue, 0.6, 0.3);
+        }
+
+        renderer.render(scene, camera);
+    }
+
+    // Resize handler
+    window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Init
+    init();
+    </script>
+</body>
+</html>
