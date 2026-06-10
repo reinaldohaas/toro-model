@@ -435,9 +435,11 @@ class ToroSimulation3D:
                 
                 t_output_next += cfg_time.t_output
             
-            # Salvar snapshot 3D para animação
+            # Salvar snapshot 3D para animação (tempos exatos para IDV)
             if t >= self._snap_next:
-                self.snapshots['time'].append(float(t))
+                # Tempo exato (arredondado para múltiplo do intervalo)
+                exact_t = round(self._snap_next / self._snap_interval) * self._snap_interval
+                self.snapshots['time'].append(exact_t)
                 self.snapshots['w'].append(self.w.copy())
                 self.snapshots['qc'].append((self.qc * 1000).copy())
                 self.snapshots['qg'].append((self.qg * 1000).copy())
@@ -731,7 +733,13 @@ class ToroSimulation3D:
         print("=" * 60)
     
     def _save_netcdf(self):
-        """Salva campos 3D em formato NetCDF CF-1.6 (compatível com IDV/Panoply)."""
+        """Salva campos 3D em formato NetCDF CF-1.6 (compatível com IDV/Panoply).
+        
+        Estrutura:
+            - Campos 4D animáveis: (time, z, y, x) — IDV exige esta ordem
+            - time: regular, igualmente espaçado (0, 50, 100, ..., 600s)
+            - Coordenadas: z(m) + lat/lon auxiliar
+        """
         try:
             from netCDF4 import Dataset
             import numpy as np
@@ -743,7 +751,7 @@ class ToroSimulation3D:
         ds = Dataset(filepath, 'w', format='NETCDF4')
         
         # ============================================================
-        # Atributos globais CF-1.6 (IDV exige Conventions)
+        # Atributos globais CF-1.6
         # ============================================================
         ds.Conventions = 'CF-1.6'
         ds.title = 'Toro Model 3D - Anelastic Theta-rho Simulation'
@@ -757,24 +765,29 @@ class ToroSimulation3D:
         ds.author = 'Reinaldo Haas, UFSC'
         ds.location = f'{self.config.location.name}, {self.config.location.municipality}'
         
+        n_snaps = len(self.snapshots['time'])
+        
         # ============================================================
-        # Dimensões
+        # Dimensões — IDV quer (time, z, y, x) nesta ordem
         # ============================================================
-        ds.createDimension('time', None)  # unlimited para IDV
+        ds.createDimension('time', n_snaps if n_snaps > 0 else 1)
         ds.createDimension('z', self.nz)
         ds.createDimension('y', self.ny)
         ds.createDimension('x', self.nx)
         
         # ============================================================
-        # Coordenada: time (CF requer unidades "since" formato)
+        # Coordenada: time — regular, igualmente espaçado
         # ============================================================
         t_var = ds.createVariable('time', 'f8', ('time',))
         t_var.units = 'seconds since 2008-11-01 00:00:00'
         t_var.calendar = 'standard'
         t_var.standard_name = 'time'
-        t_var.long_name = 'Time since simulation start'
+        t_var.long_name = 'Time'
         t_var.axis = 'T'
-        t_var[:] = self.history['time']
+        if n_snaps > 0:
+            t_var[:] = self.snapshots['time']
+        else:
+            t_var[:] = [600.0]
         
         # ============================================================
         # Coordenada: z (altitude em metros, positive up)
@@ -788,40 +801,37 @@ class ToroSimulation3D:
         z_var[:] = self.grid.z
         
         # ============================================================
-        # Coordenada: y (metros, com latitude auxiliar)
+        # Coordenada: y (metros)
         # ============================================================
         y_var = ds.createVariable('y', 'f4', ('y',))
         y_var.units = 'm'
         y_var.standard_name = 'projection_y_coordinate'
-        y_var.long_name = 'Y distance from domain center'
+        y_var.long_name = 'Y distance'
         y_var.axis = 'Y'
         y_var[:] = self.grid.y
         
         # ============================================================
-        # Coordenada: x (metros, com longitude auxiliar)
+        # Coordenada: x (metros)
         # ============================================================
         x_var = ds.createVariable('x', 'f4', ('x',))
         x_var.units = 'm'
         x_var.standard_name = 'projection_x_coordinate'
-        x_var.long_name = 'X distance from domain center'
+        x_var.long_name = 'X distance'
         x_var.axis = 'X'
         x_var[:] = self.grid.x
         
         # ============================================================
-        # Coordenadas auxiliares: lat/lon (IDV precisa para plotar)
-        # Centro: Vale do Revólver (-26.89, -49.37)
+        # Coordenadas auxiliares: lat/lon
+        # Centro: Vale do Revolver (-26.89, -49.37)
         # ============================================================
         lat_center = -26.89
         lon_center = -49.37
-        
-        # Converter metros para graus (aproximação local)
-        deg_per_m_lat = 1.0 / 111320.0  # ~111 km por grau
+        deg_per_m_lat = 1.0 / 111320.0
         deg_per_m_lon = 1.0 / (111320.0 * np.cos(np.radians(lat_center)))
         
         lat_1d = lat_center + (self.grid.y - self.grid.y.mean()) * deg_per_m_lat
         lon_1d = lon_center + (self.grid.x - self.grid.x.mean()) * deg_per_m_lon
         
-        # 2D lat/lon arrays para CF
         lon_2d, lat_2d = np.meshgrid(lon_1d, lat_1d, indexing='ij')
         
         lat_var = ds.createVariable('latitude', 'f8', ('x', 'y'))
@@ -837,7 +847,7 @@ class ToroSimulation3D:
         lon_var[:] = lon_2d
         
         # ============================================================
-        # Grid mapping (projeção cartesiana genérica)
+        # Grid mapping
         # ============================================================
         crs = ds.createVariable('crs', 'i4')
         crs.grid_mapping_name = 'latitude_longitude'
@@ -846,204 +856,98 @@ class ToroSimulation3D:
         crs.longitude_of_prime_meridian = 0.0
         
         # ============================================================
-        # Campos 3D (estado final, snap t=600s)
+        # Campos 4D: (time, z, y, x) — para animacao no IDV
         # ============================================================
-        var_metadata = {
-            'u': {
-                'data': self.u,
-                'units': 'm s-1',
-                'standard_name': 'eastward_wind',
-                'long_name': 'Zonal wind component',
-            },
-            'v': {
-                'data': self.v,
-                'units': 'm s-1',
-                'standard_name': 'northward_wind',
-                'long_name': 'Meridional wind component',
-            },
-            'w': {
-                'data': self.w,
-                'units': 'm s-1',
-                'standard_name': 'upward_air_velocity',
-                'long_name': 'Vertical wind component',
-            },
-            'theta_rho': {
-                'data': self.theta_rho,
-                'units': 'K',
-                'long_name': 'Density potential temperature',
-            },
-            'p_prime': {
-                'data': self.p_prime,
-                'units': 'Pa',
-                'long_name': 'Pressure perturbation',
-            },
-            'qv': {
-                'data': self.qv * 1000,
-                'units': 'g kg-1',
-                'standard_name': 'humidity_mixing_ratio',
-                'long_name': 'Water vapor mixing ratio',
-            },
-            'qc': {
-                'data': self.qc * 1000,
-                'units': 'g kg-1',
-                'long_name': 'Cloud water mixing ratio',
-            },
-            'qr': {
-                'data': self.qr * 1000,
-                'units': 'g kg-1',
-                'long_name': 'Rain water mixing ratio',
-            },
-            'qi': {
-                'data': self.qi * 1000,
-                'units': 'g kg-1',
-                'long_name': 'Cloud ice mixing ratio',
-            },
-            'qs': {
-                'data': self.qs * 1000,
-                'units': 'g kg-1',
-                'long_name': 'Snow mixing ratio',
-            },
-            'qg': {
-                'data': self.qg * 1000,
-                'units': 'g kg-1',
-                'long_name': 'Graupel and hail mixing ratio',
-            },
-        }
-        
-        for vname, meta in var_metadata.items():
-            v = ds.createVariable(vname, 'f4', ('x', 'y', 'z'),
+        def write_4d(vname, snap_list, final_field, units, long_name,
+                     standard_name=None):
+            """Escreve campo 4D a partir dos snapshots ou estado final."""
+            v = ds.createVariable(vname, 'f4', ('time', 'z', 'y', 'x'),
                                   zlib=True, complevel=4)
-            v[:] = meta['data']
-            v.units = meta['units']
-            v.long_name = meta['long_name']
-            if 'standard_name' in meta:
-                v.standard_name = meta['standard_name']
-            v.coordinates = 'longitude latitude z'
+            v.units = units
+            v.long_name = long_name
+            if standard_name:
+                v.standard_name = standard_name
+            v.coordinates = 'longitude latitude'
+            v.grid_mapping = 'crs'
+            
+            if n_snaps > 0 and len(snap_list) == n_snaps:
+                for ti in range(n_snaps):
+                    # snap_list[ti] shape: (nx, ny, nz) -> transpor para (nz, ny, nx)
+                    v[ti, :, :, :] = snap_list[ti].transpose(2, 1, 0)
+            else:
+                v[0, :, :, :] = final_field.transpose(2, 1, 0)
+        
+        write_4d('W', self.snapshots['w'], self.w,
+                 'm s-1', 'Vertical velocity',
+                 standard_name='upward_air_velocity')
+        
+        write_4d('QC', self.snapshots['qc'], self.qc * 1000,
+                 'g kg-1', 'Cloud water mixing ratio')
+        
+        write_4d('QG', self.snapshots['qg'], self.qg * 1000,
+                 'g kg-1', 'Graupel mixing ratio')
+        
+        write_4d('THETA_RHO', self.snapshots['theta_rho'], self.theta_rho,
+                 'K', 'Density potential temperature')
+        
+        write_4d('P_PRIME', self.snapshots['p_prime'], self.p_prime,
+                 'Pa', 'Pressure perturbation')
+        
+        print(f"  Campos 4D: {n_snaps} frames (time,z,y,x)")
+        
+        # ============================================================
+        # Campos 3D estaticos: (z, y, x) — estado final
+        # ============================================================
+        for vname, data, units, long_name in [
+            ('U', self.u, 'm s-1', 'Zonal wind'),
+            ('V', self.v, 'm s-1', 'Meridional wind'),
+            ('QV', self.qv * 1000, 'g kg-1', 'Water vapor'),
+            ('QR', self.qr * 1000, 'g kg-1', 'Rain water'),
+            ('QI', self.qi * 1000, 'g kg-1', 'Cloud ice'),
+            ('QS', self.qs * 1000, 'g kg-1', 'Snow'),
+        ]:
+            v = ds.createVariable(vname, 'f4', ('z', 'y', 'x'),
+                                  zlib=True, complevel=4)
+            v[:] = data.transpose(2, 1, 0)
+            v.units = units
+            v.long_name = long_name
+            v.coordinates = 'longitude latitude'
             v.grid_mapping = 'crs'
         
         # ============================================================
-        # Campos 4D com snapshots temporais (time, x, y, z)
-        # Para animação no IDV/Panoply
+        # Perfis de referencia (1D em z)
         # ============================================================
-        n_snaps = len(self.snapshots['time'])
-        if n_snaps > 0:
-            # Dimensão time para snapshots (usar snap_time separado)
-            ds.createDimension('snap_time', None)
-            
-            st_var = ds.createVariable('snap_time', 'f8', ('snap_time',))
-            st_var.units = 'seconds since 2008-11-01 00:00:00'
-            st_var.calendar = 'standard'
-            st_var.standard_name = 'time'
-            st_var.long_name = 'Snapshot time'
-            st_var.axis = 'T'
-            st_var[:] = self.snapshots['time']
-            
-            snap_fields = {
-                'w_snap': {
-                    'data': np.array(self.snapshots['w']),
-                    'units': 'm s-1',
-                    'standard_name': 'upward_air_velocity',
-                    'long_name': 'Vertical velocity (time series)',
-                },
-                'qc_snap': {
-                    'data': np.array(self.snapshots['qc']),
-                    'units': 'g kg-1',
-                    'long_name': 'Cloud water mixing ratio (time series)',
-                },
-                'qg_snap': {
-                    'data': np.array(self.snapshots['qg']),
-                    'units': 'g kg-1',
-                    'long_name': 'Graupel mixing ratio (time series)',
-                },
-                'theta_rho_snap': {
-                    'data': np.array(self.snapshots['theta_rho']),
-                    'units': 'K',
-                    'long_name': 'Density potential temperature (time series)',
-                },
-                'p_prime_snap': {
-                    'data': np.array(self.snapshots['p_prime']),
-                    'units': 'Pa',
-                    'long_name': 'Pressure perturbation (time series)',
-                },
-            }
-            
-            for vname, meta in snap_fields.items():
-                v = ds.createVariable(vname, 'f4',
-                                      ('snap_time', 'x', 'y', 'z'),
-                                      zlib=True, complevel=4)
-                v[:] = meta['data']
-                v.units = meta['units']
-                v.long_name = meta['long_name']
-                if 'standard_name' in meta:
-                    v.standard_name = meta['standard_name']
-                v.coordinates = 'snap_time longitude latitude z'
-                v.grid_mapping = 'crs'
-            
-            print(f"  Snapshots 4D: {n_snaps} frames salvos")
-        
-        # ============================================================
-        # Perfis de referência (1D em z)
-        # ============================================================
-        profile_metadata = {
-            'T_bar': {
-                'data': self.grid.T_bar_z,
-                'units': 'K',
-                'standard_name': 'air_temperature',
-                'long_name': 'Base state temperature profile',
-            },
-            'p_bar': {
-                'data': self.grid.p_bar_z,
-                'units': 'Pa',
-                'standard_name': 'air_pressure',
-                'long_name': 'Base state pressure profile',
-            },
-            'rho_bar': {
-                'data': self.grid.rho_bar_z,
-                'units': 'kg m-3',
-                'standard_name': 'air_density',
-                'long_name': 'Base state density profile',
-            },
-            'theta_rho_bar': {
-                'data': self.grid.theta_rho_bar_z,
-                'units': 'K',
-                'long_name': 'Base state density potential temperature',
-            },
-        }
-        
-        for vname, meta in profile_metadata.items():
+        for vname, data, units, long_name in [
+            ('T_bar', self.grid.T_bar_z, 'K', 'Base state temperature'),
+            ('p_bar', self.grid.p_bar_z, 'Pa', 'Base state pressure'),
+            ('rho_bar', self.grid.rho_bar_z, 'kg m-3', 'Base state density'),
+            ('theta_rho_bar', self.grid.theta_rho_bar_z, 'K', 'Base state theta_rho'),
+        ]:
             v = ds.createVariable(vname, 'f4', ('z',))
-            v[:] = meta['data']
-            v.units = meta['units']
-            v.long_name = meta['long_name']
-            if 'standard_name' in meta:
-                v.standard_name = meta['standard_name']
+            v[:] = data
+            v.units = units
+            v.long_name = long_name
         
         # ============================================================
-        # Séries temporais (1D em time)
+        # Series temporais diagnosticas (dimensao separada)
         # ============================================================
-        ts_metadata = {
-            'w_max_t': {
-                'data': self.history['w_max'],
-                'units': 'm s-1',
-                'long_name': 'Maximum updraft velocity',
-            },
-            'qg_max_t': {
-                'data': self.history['qg_max'],
-                'units': 'g kg-1',
-                'long_name': 'Maximum graupel mixing ratio',
-            },
-            'convergence_max_t': {
-                'data': self.history['convergence_max'],
-                'units': 's-1',
-                'long_name': 'Maximum horizontal convergence',
-            },
-        }
+        n_diag = len(self.history['time'])
+        ds.createDimension('diag_step', n_diag)
         
-        for vname, meta in ts_metadata.items():
-            v = ds.createVariable(vname, 'f4', ('time',))
-            v[:] = meta['data']
-            v.units = meta['units']
-            v.long_name = meta['long_name']
+        dt_var = ds.createVariable('diag_time', 'f8', ('diag_step',))
+        dt_var.units = 'seconds since 2008-11-01 00:00:00'
+        dt_var.long_name = 'Diagnostic output time'
+        dt_var[:] = self.history['time']
+        
+        for vname, data, units, long_name in [
+            ('w_max_diag', self.history['w_max'], 'm s-1', 'Max updraft'),
+            ('qg_max_diag', self.history['qg_max'], 'g kg-1', 'Max graupel'),
+            ('conv_max_diag', self.history['convergence_max'], 's-1', 'Max convergence'),
+        ]:
+            v = ds.createVariable(vname, 'f4', ('diag_step',))
+            v[:] = data
+            v.units = units
+            v.long_name = long_name
         
         ds.close()
         print(f"  NetCDF CF-1.6 salvo: {filepath}")
