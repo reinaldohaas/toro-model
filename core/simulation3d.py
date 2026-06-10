@@ -116,6 +116,18 @@ class ToroSimulation3D:
             'M_piston': [],
         }
         
+        # Snapshots 3D para NetCDF (IDV animação)
+        self.snapshots = {
+            'time': [],
+            'w': [],
+            'qc': [],
+            'qg': [],
+            'theta_rho': [],
+            'p_prime': [],
+        }
+        self._snap_interval = 50.0  # s — salvar snapshot a cada 50s
+        self._snap_next = 0.0
+        
         # Resultados
         self.results = {
             'metadata': {
@@ -422,6 +434,16 @@ class ToroSimulation3D:
                       f"conv={conv_max:.2e} | dt={dt:.2f}s")
                 
                 t_output_next += cfg_time.t_output
+            
+            # Salvar snapshot 3D para animação
+            if t >= self._snap_next:
+                self.snapshots['time'].append(float(t))
+                self.snapshots['w'].append(self.w.copy())
+                self.snapshots['qc'].append((self.qc * 1000).copy())
+                self.snapshots['qg'].append((self.qg * 1000).copy())
+                self.snapshots['theta_rho'].append(self.theta_rho.copy())
+                self.snapshots['p_prime'].append(self.p_prime.copy())
+                self._snap_next += self._snap_interval
         
         wall_time = time_module.time() - start_wall
         print(f"\n  Fase 1 concluída: {step} passos em {wall_time:.1f}s")
@@ -898,6 +920,66 @@ class ToroSimulation3D:
                 v.standard_name = meta['standard_name']
             v.coordinates = 'longitude latitude z'
             v.grid_mapping = 'crs'
+        
+        # ============================================================
+        # Campos 4D com snapshots temporais (time, x, y, z)
+        # Para animação no IDV/Panoply
+        # ============================================================
+        n_snaps = len(self.snapshots['time'])
+        if n_snaps > 0:
+            # Dimensão time para snapshots (usar snap_time separado)
+            ds.createDimension('snap_time', None)
+            
+            st_var = ds.createVariable('snap_time', 'f8', ('snap_time',))
+            st_var.units = 'seconds since 2008-11-01 00:00:00'
+            st_var.calendar = 'standard'
+            st_var.standard_name = 'time'
+            st_var.long_name = 'Snapshot time'
+            st_var.axis = 'T'
+            st_var[:] = self.snapshots['time']
+            
+            snap_fields = {
+                'w_snap': {
+                    'data': np.array(self.snapshots['w']),
+                    'units': 'm s-1',
+                    'standard_name': 'upward_air_velocity',
+                    'long_name': 'Vertical velocity (time series)',
+                },
+                'qc_snap': {
+                    'data': np.array(self.snapshots['qc']),
+                    'units': 'g kg-1',
+                    'long_name': 'Cloud water mixing ratio (time series)',
+                },
+                'qg_snap': {
+                    'data': np.array(self.snapshots['qg']),
+                    'units': 'g kg-1',
+                    'long_name': 'Graupel mixing ratio (time series)',
+                },
+                'theta_rho_snap': {
+                    'data': np.array(self.snapshots['theta_rho']),
+                    'units': 'K',
+                    'long_name': 'Density potential temperature (time series)',
+                },
+                'p_prime_snap': {
+                    'data': np.array(self.snapshots['p_prime']),
+                    'units': 'Pa',
+                    'long_name': 'Pressure perturbation (time series)',
+                },
+            }
+            
+            for vname, meta in snap_fields.items():
+                v = ds.createVariable(vname, 'f4',
+                                      ('snap_time', 'x', 'y', 'z'),
+                                      zlib=True, complevel=4)
+                v[:] = meta['data']
+                v.units = meta['units']
+                v.long_name = meta['long_name']
+                if 'standard_name' in meta:
+                    v.standard_name = meta['standard_name']
+                v.coordinates = 'snap_time longitude latitude z'
+                v.grid_mapping = 'crs'
+            
+            print(f"  Snapshots 4D: {n_snaps} frames salvos")
         
         # ============================================================
         # Perfis de referência (1D em z)
