@@ -57,29 +57,23 @@ def smooth_step(t, t0, t1):
 
 
 def get_camera(frac, xc, yc, z_max, w_max, qg_max):
-    """Câmera cinematográfica afastada.
-    Domínio: ~10km x 10km x 15km. Centro em (xc,yc) ≈ (4750, 4750).
-    """
-    angle = 30 + 120 * frac  # gira 120° total
+    """Câmera focada no pistão e depois recua para as ondas."""
+    angle = 30 + 90 * frac
     
-    if frac < 0.30:
-        p = frac / 0.30
-        cam_dist = 18000 - 4000 * p     # 18km → 14km
-        cam_z = 2000 + 2000 * p         # 2km → 4km
-        focal_z = 2000 + 2000 * p      
-        
-    elif frac < 0.65:
-        p = (frac - 0.30) / 0.35
-        cam_dist = 14000                # mantém distância
-        cam_z = 4000 + 4000 * p         # 4km → 8km
-        focal_z = 4000 + 3000 * p      
+    if frac < 0.60:
+        # FASE 1: Close-up perto da superfície olhando para cima (pistão caindo)
+        p = frac / 0.60
+        cam_dist = 6000 - 1000 * p     # Bem perto (5km-6km)
+        cam_z = 1000 + 1000 * p        # Perto do solo (1km-2km)
+        focal_z = 3000 - 2000 * p      # Foco desce junto com o colapso do pistão
         
     else:
-        p = (frac - 0.65) / 0.35
+        # FASE 2: Afasta rápido para mostrar as ondas se propagando
+        p = (frac - 0.60) / 0.40
         p_s = smooth_step(p, 0, 1)
-        cam_dist = 14000 + 6000 * p_s   # afasta para 20km
-        cam_z = 8000 + 4000 * p_s       # sobe para 12km
-        focal_z = 7000 - 1000 * p_s     # olha um pouco mais baixo
+        cam_dist = 5000 + 11000 * p_s  # Recua drasticamente para 16km
+        cam_z = 2000 + 8000 * p_s      # Sobe para 10km
+        focal_z = 1000 + 3000 * p_s    # Olha para o centro da propagação
     
     cam_x = xc + cam_dist * np.cos(np.radians(angle))
     cam_y = yc + cam_dist * np.sin(np.radians(angle))
@@ -222,22 +216,21 @@ def render(data, output_path='viz/toro_realdata_3d.mp4',
                         pass
         
         # ============================================
-        # P' — Perturbação de pressão (Desativado devido ao ruído numérico)
+        # P' — Perturbação de pressão (Ondas)
         # ============================================
-        # pp_range = float(abs(pp).max())
-        # if pp_range > 10:
-        #     grid_pp = pv.RectilinearGrid(x, y, z)
-        #     pp_pos = np.clip(pp, 0, None)
-        #     grid_pp.cell_data['PP'] = pp_pos[:-1,:-1,:-1].ravel(order='F')
-        #     iso_pp = grid_pp.cell_data_to_point_data()
-        #     thresh = max(20, pp_range * 0.3)
-        #     try:
-        #         cp = iso_pp.contour([thresh], scalars='PP')
-        #         if cp.n_points > 10:
-        #             pl.add_mesh(cp, color='darkorange', opacity=0.15,
-        #                         smooth_shading=True)
-        #     except Exception:
-        #         pass
+        pp_range = float(abs(pp).max())
+        if pp_range > 15:
+            grid_pp = pv.RectilinearGrid(x, y, z)
+            pp_pos = np.clip(pp, 0, None)
+            grid_pp.cell_data['PP'] = pp_pos[:-1,:-1,:-1].ravel(order='F')
+            iso_pp = grid_pp.cell_data_to_point_data()
+            thresh = max(25, pp_range * 0.4)
+            try:
+                cp = iso_pp.contour([thresh], scalars='PP')
+                if cp.n_points > 10:
+                    pl.add_mesh(cp, color='darkorange', opacity=0.15, style='wireframe')
+            except Exception:
+                pass
         
         # ============================================
         # Solo
