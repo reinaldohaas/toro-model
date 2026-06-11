@@ -230,24 +230,22 @@ def render(data, output_path='viz/toro_realdata_3d.mp4',
                         pass
         
         # ============================================
-        # P' — Perturbação de pressão
+        # P' — Perturbação de pressão (Desativado devido ao ruído numérico)
         # ============================================
-        pp_range = float(abs(pp).max())
-        if pp_range > 10:
-            grid_pp = pv.RectilinearGrid(x, y, z)
-            
-            # p' > 0 (compressão — laranja)
-            pp_pos = np.clip(pp, 0, None)
-            grid_pp.cell_data['PP'] = pp_pos[:-1,:-1,:-1].ravel(order='F')
-            iso_pp = grid_pp.cell_data_to_point_data()
-            thresh = max(20, pp_range * 0.3)
-            try:
-                cp = iso_pp.contour([thresh], scalars='PP')
-                if cp.n_points > 10:
-                    pl.add_mesh(cp, color='darkorange', opacity=0.15,
-                                smooth_shading=True)
-            except Exception:
-                pass
+        # pp_range = float(abs(pp).max())
+        # if pp_range > 10:
+        #     grid_pp = pv.RectilinearGrid(x, y, z)
+        #     pp_pos = np.clip(pp, 0, None)
+        #     grid_pp.cell_data['PP'] = pp_pos[:-1,:-1,:-1].ravel(order='F')
+        #     iso_pp = grid_pp.cell_data_to_point_data()
+        #     thresh = max(20, pp_range * 0.3)
+        #     try:
+        #         cp = iso_pp.contour([thresh], scalars='PP')
+        #         if cp.n_points > 10:
+        #             pl.add_mesh(cp, color='darkorange', opacity=0.15,
+        #                         smooth_shading=True)
+        #     except Exception:
+        #         pass
         
         # ============================================
         # Solo
