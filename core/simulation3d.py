@@ -119,13 +119,15 @@ class ToroSimulation3D:
         # Snapshots 3D para NetCDF (IDV animação)
         self.snapshots = {
             'time': [],
+            'u': [],
+            'v': [],
             'w': [],
             'qc': [],
             'qg': [],
             'theta_rho': [],
             'p_prime': [],
         }
-        self._snap_interval = 50.0  # s — salvar snapshot a cada 50s
+        self._snap_interval = 5.0  # s — snapshot a cada 5s (alta resolução)
         self._snap_next = 0.0
         
         # Resultados
@@ -440,6 +442,8 @@ class ToroSimulation3D:
                 # Tempo exato (arredondado para múltiplo do intervalo)
                 exact_t = round(self._snap_next / self._snap_interval) * self._snap_interval
                 self.snapshots['time'].append(exact_t)
+                self.snapshots['u'].append(self.u.copy())
+                self.snapshots['v'].append(self.v.copy())
                 self.snapshots['w'].append(self.w.copy())
                 self.snapshots['qc'].append((self.qc * 1000).copy())
                 self.snapshots['qg'].append((self.qg * 1000).copy())
@@ -748,7 +752,7 @@ class ToroSimulation3D:
             return
         
         filepath = 'output/toro3d.nc'
-        ds = Dataset(filepath, 'w', format='NETCDF4')
+        ds = Dataset(filepath, 'w', format='NETCDF4_CLASSIC')
         
         # ============================================================
         # Atributos globais CF-1.6
@@ -877,6 +881,14 @@ class ToroSimulation3D:
             else:
                 v[0, :, :, :] = final_field.transpose(2, 1, 0)
         
+        write_4d('U', self.snapshots['u'], self.u,
+                 'm s-1', 'Zonal wind',
+                 standard_name='eastward_wind')
+        
+        write_4d('V', self.snapshots['v'], self.v,
+                 'm s-1', 'Meridional wind',
+                 standard_name='northward_wind')
+        
         write_4d('W', self.snapshots['w'], self.w,
                  'm s-1', 'Vertical velocity',
                  standard_name='upward_air_velocity')
@@ -893,14 +905,12 @@ class ToroSimulation3D:
         write_4d('P_PRIME', self.snapshots['p_prime'], self.p_prime,
                  'Pa', 'Pressure perturbation')
         
-        print(f"  Campos 4D: {n_snaps} frames (time,z,y,x)")
+        print(f"  Campos 4D: {n_snaps} frames x 7 vars (time,z,y,x)")
         
         # ============================================================
         # Campos 3D estaticos: (z, y, x) — estado final
         # ============================================================
         for vname, data, units, long_name in [
-            ('U', self.u, 'm s-1', 'Zonal wind'),
-            ('V', self.v, 'm s-1', 'Meridional wind'),
             ('QV', self.qv * 1000, 'g kg-1', 'Water vapor'),
             ('QR', self.qr * 1000, 'g kg-1', 'Rain water'),
             ('QI', self.qi * 1000, 'g kg-1', 'Cloud ice'),
