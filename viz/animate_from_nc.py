@@ -261,7 +261,7 @@ def render(data, output_path='viz/toro_realdata_3d.mp4',
         # ============================================
         # Câmera
         # ============================================
-        pos, focal, up = get_camera(frac, xc, yc, z.max())
+        pos, focal, up = get_camera(frac, xc, yc, z.max(), w_max, qg_max)
         pl.camera_position = [pos, focal, up]
         
         # ============================================
