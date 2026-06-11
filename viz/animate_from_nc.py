@@ -57,37 +57,29 @@ def smooth_step(t, t0, t1):
 
 
 def get_camera(frac, xc, yc, z_max, w_max, qg_max):
-    """Câmera cinematográfica close-up em 3 fases.
-    
+    """Câmera cinematográfica afastada.
     Domínio: ~10km x 10km x 15km. Centro em (xc,yc) ≈ (4750, 4750).
-    
-    Fase 1 (0-30%):  Close-up lateral baixo — formação da bolha térmica
-    Fase 2 (30-65%): Sobe com a coluna — acompanha o updraft crescendo
-    Fase 3 (65-100%): Afasta e gira — visão do sistema maduro com granizo
     """
-    angle = 30 + 200 * frac  # gira 200° total
+    angle = 30 + 120 * frac  # gira 120° total
     
     if frac < 0.30:
-        # FASE 1: Close-up baixo, vê a bolha subir
         p = frac / 0.30
-        cam_dist = 6000 - 1000 * p     # 6km → 5km
-        cam_z = 1500 + 2500 * p        # 1.5km → 4km (sobe com bolha)
-        focal_z = 1000 + 2000 * p      # olha para cima
+        cam_dist = 18000 - 4000 * p     # 18km → 14km
+        cam_z = 2000 + 2000 * p         # 2km → 4km
+        focal_z = 2000 + 2000 * p      
         
     elif frac < 0.65:
-        # FASE 2: Acompanha updraft intenso subindo
         p = (frac - 0.30) / 0.35
-        cam_dist = 5000                # mantém distância
-        cam_z = 4000 + 4000 * p        # 4km → 8km (sobe rápido)
-        focal_z = 3000 + 5000 * p      # foco sobe com topo
+        cam_dist = 14000                # mantém distância
+        cam_z = 4000 + 4000 * p         # 4km → 8km
+        focal_z = 4000 + 3000 * p      
         
     else:
-        # FASE 3: Afasta para ver o sistema completo
         p = (frac - 0.65) / 0.35
         p_s = smooth_step(p, 0, 1)
-        cam_dist = 5000 + 4000 * p_s   # afasta para 9km
-        cam_z = 8000 + 3000 * p_s      # sobe para 11km
-        focal_z = 8000 - 1000 * p_s    # olha um pouco mais baixo
+        cam_dist = 14000 + 6000 * p_s   # afasta para 20km
+        cam_z = 8000 + 4000 * p_s       # sobe para 12km
+        focal_z = 7000 - 1000 * p_s     # olha um pouco mais baixo
     
     cam_x = xc + cam_dist * np.cos(np.radians(angle))
     cam_y = yc + cam_dist * np.sin(np.radians(angle))
