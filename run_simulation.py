@@ -24,6 +24,11 @@ def main():
     """Executa simulação completa do Toró."""
     config = get_default_config()
     
+    # Check for custom sounding
+    for i, arg in enumerate(sys.argv):
+        if arg == '--sounding' and i + 1 < len(sys.argv):
+            config.thermodynamics.sounding_file = sys.argv[i+1]
+    
     if '--1d' in sys.argv:
         # Modelo 1D legado
         from core.simulation import ToroSimulation

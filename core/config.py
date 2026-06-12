@@ -110,6 +110,9 @@ class ThermodynamicsConfig:
     # Perturbação inicial (trigger)
     dT_perturbation: float = 3.0  # K — perturbação térmica na base
     z_perturbation: float = 500.0 # m — profundidade da perturbação
+    
+    # Sondagem opcional
+    sounding_file: Optional[str] = None  # Caminho para arquivo de sondagem JSON
 
 
 @dataclass

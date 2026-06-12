@@ -172,6 +172,67 @@ class ToroSimulation3D:
     # INICIALIZAÇÃO
     # ================================================================
     
+    def _load_sounding(self):
+        """Carrega e interpola a sondagem ERA5 para a grade vertical do modelo."""
+        import json
+        from core.constants import epsilon
+        
+        print(f"  Carregando sondagem de: {self.config.thermodynamics.sounding_file}")
+        with open(self.config.thermodynamics.sounding_file, 'r') as f:
+            data = json.load(f)
+            
+        levels = data['levels']
+        p_levels = sorted([int(k) for k in levels.keys()], reverse=True) # 1000 down to 30
+        
+        z_era5, T_era5, qv_era5, u_era5, v_era5 = [], [], [], [], []
+        
+        for p in p_levels:
+            lvl = levels[str(p)]
+            if lvl.get('temperature') is None or lvl.get('geopotential_height') is None:
+                continue
+                
+            z = lvl['geopotential_height']
+            T = lvl['temperature'] + 273.15 # C -> K
+            RH = (lvl.get('relative_humidity') or 50.0) / 100.0
+            
+            # qv from RH and p
+            e_s = 611.2 * np.exp(17.67 * (T - 273.15) / ((T - 273.15) + 243.5))
+            qvs = epsilon * e_s / (p * 100.0 - e_s)
+            qv = RH * qvs
+            
+            z_era5.append(z)
+            T_era5.append(T)
+            qv_era5.append(qv)
+            u_era5.append(lvl.get('u_component', 0.0) or 0.0)
+            v_era5.append(lvl.get('v_component', 0.0) or 0.0)
+            
+        # Interpolação para a grade z do modelo
+        grid_z = self.grid.z
+        T_interp = np.interp(grid_z, z_era5, T_era5)
+        qv_interp = np.interp(grid_z, z_era5, qv_era5)
+        self.u_env_z = np.interp(grid_z, z_era5, u_era5)
+        self.v_env_z = np.interp(grid_z, z_era5, v_era5)
+        
+        # Sobrescrever estado base da grade
+        self.grid.T_bar_z = T_interp
+        self.grid.qv_bar_z = qv_interp
+        
+        # Recalcular variáveis de densidade e pressão base
+        T_mid = 0.5 * (self.grid.T_bar_z[:-1] + self.grid.T_bar_z[1:])
+        dp_exponent = -g * self.grid.dz / (R_d * T_mid)
+        log_p = np.empty(self.grid.nz)
+        log_p[0] = np.log(self.grid.p_sfc)
+        log_p[1:] = log_p[0] + np.cumsum(dp_exponent)
+        self.grid.p_bar_z = np.exp(log_p)
+        self.grid.exner_z = (self.grid.p_bar_z / p_0) ** (R_d / c_p)
+        self.grid.rho_bar_z = self.grid.p_bar_z / (R_d * self.grid.T_bar_z)
+        self.grid.theta_bar_z = self.grid.T_bar_z / self.grid.exner_z
+        self.grid.theta_rho_bar_z = self.grid.theta_bar_z * (1.0 + (R_v / R_d) * self.grid.qv_bar_z)
+        
+        # Atualizar campos 3D com o novo estado base
+        self.theta_rho = self.grid.broadcast_z(self.grid.theta_rho_bar_z) * np.ones(self.shape)
+        self.qv = self.grid.broadcast_z(self.grid.qv_bar_z) * np.ones(self.shape)
+
     def initialize(self):
         """Inicializa a simulação com perturbação térmica + convergência."""
         print("Inicializando campos...")
@@ -210,17 +271,25 @@ class ToroSimulation3D:
         self.u = -V_conv * (dx_c / r_horiz) * z_factor
         self.v = -V_conv * (dy_c / r_horiz) * z_factor
         
-        # Cisalhamento ambiental (hodógrafo simples)
-        du_dz = 3e-3  # s⁻¹ — cisalhamento vertical
-        u_sfc = 5.0    # m/s — vento de superfície
-        u_env = u_sfc + du_dz * self.grid.Z
-        self.u += self.grid.broadcast_z(
-            np.clip(u_sfc + du_dz * self.grid.z, 0, 30)
-        ) * np.ones(self.shape) * 0.3  # Fração modesta
+        # Carregar sondagem se existir, ou usar perfil analítico
+        if self.config.thermodynamics.sounding_file and os.path.exists(self.config.thermodynamics.sounding_file):
+            self._load_sounding()
+            self.u += self.grid.broadcast_z(self.u_env_z) * np.ones(self.shape) * 0.5
+            self.v += self.grid.broadcast_z(self.v_env_z) * np.ones(self.shape) * 0.5
+        else:
+            # Cisalhamento ambiental (hodógrafo simples)
+            du_dz = 3e-3  # s⁻¹ — cisalhamento vertical
+            u_sfc = 5.0    # m/s — vento de superfície
+            self.u += self.grid.broadcast_z(
+                np.clip(u_sfc + du_dz * self.grid.z, 0, 30)
+            ) * np.ones(self.shape) * 0.3  # Fração modesta
         
         print(f"  Perturbação: +{dT_pert:.1f}K, R_bolha={R_bubble:.0f}m")
         print(f"  Convergência: V={V_conv:.0f}m/s até z={z_conv_top:.0f}m")
-        print(f"  Cisalhamento: du/dz={du_dz*1e3:.1f}×10⁻³ s⁻¹")
+        if self.config.thermodynamics.sounding_file:
+            print(f"  Vento ambiente carregado da sondagem ERA5")
+        else:
+            print(f"  Cisalhamento: du/dz={du_dz*1e3:.1f}×10⁻³ s⁻¹")
         print(f"  θ_ρ range: [{self.theta_rho.min():.1f}, {self.theta_rho.max():.1f}] K")
     
     # ================================================================
