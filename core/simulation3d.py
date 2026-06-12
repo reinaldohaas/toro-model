@@ -680,7 +680,7 @@ class ToroSimulation3D:
     # FASE 3: IMPACTO
     # ================================================================
     
-    def run_phase3(self):
+    def run_phase3(self, output_dir='output'):
         """Fase 3: Efeitos do impacto — som, sísmica, erosão."""
         print("\n" + "=" * 60)
         print("FASE 3: IMPACTO")
@@ -700,7 +700,7 @@ class ToroSimulation3D:
             D_piston=D_piston,
             M_piston=M_piston,
             config=cfg_ac,
-            output_dir='output'
+            output_dir=output_dir
         )
         
         spl_1km = compute_spl(P_impact, A_piston=A_piston, distance=1000)
@@ -770,8 +770,6 @@ class ToroSimulation3D:
             },
         }
         
-        # O som já é salvo por generate_toro_sound via output_dir
-        # Verificar se existe o WAV
         wav_path = sound_data.get('wav_path', '')
         if wav_path:
             print(f"  Som salvo: {wav_path}")
@@ -780,8 +778,8 @@ class ToroSimulation3D:
     # EXECUTAR TUDO
     # ================================================================
     
-    def run(self):
-        """Executa todas as fases e salva resultados."""
+    def run(self, output_dir='output'):
+        """Executa a simulação 3D completa e o acoplamento 1D de colapso."""
         print("\n" + "#" * 60)
         print(f"# MODELO TORÓ 3D — {self.config.location.name}")
         print(f"# {self.config.location.municipality}, {self.config.location.state}")
@@ -790,15 +788,15 @@ class ToroSimulation3D:
         self.initialize()
         self.run_phase1()
         self.run_phase2()
-        self.run_phase3()
+        self.run_phase3(output_dir=output_dir)
         
         # Salvar JSON
-        os.makedirs('output', exist_ok=True)
-        with open('output/results.json', 'w') as f:
+        os.makedirs(output_dir, exist_ok=True)
+        with open(f'{output_dir}/results.json', 'w') as f:
             json.dump(self.results, f, indent=2, default=str)
         
         # Salvar NetCDF
-        self._save_netcdf()
+        self._save_netcdf(output_dir=output_dir)
         
         # Resumo
         print("\n" + "=" * 60)
@@ -812,12 +810,12 @@ class ToroSimulation3D:
         print(f"  M_L (Richter): {self.results['phase3']['seismic']['M_L']:.2f}")
         print(f"  M_erodida: {self.results['phase3']['erosion']['M_eroded_ton']:.1f} ton")
         print(f"  Barro: {self.results['phase3']['erosion']['mud_percent']}%")
-        print(f"\n  Resultados: output/results.json")
-        print(f"  NetCDF: output/toro3d.nc")
-        print(f"  Som: output/toro_sound.wav")
+        print(f"\n  Resultados: {output_dir}/results.json")
+        print(f"  NetCDF: {output_dir}/toro3d.nc")
+        print(f"  Som: {output_dir}/toro_sound.wav")
         print("=" * 60)
     
-    def _save_netcdf(self):
+    def _save_netcdf(self, output_dir='output'):
         """Salva campos 3D em formato NetCDF CF-1.6 (compatível com IDV/Panoply).
         
         Estrutura:
@@ -832,7 +830,9 @@ class ToroSimulation3D:
             print("  [WARN] netCDF4 não instalado. Salvando apenas JSON.")
             return
         
-        filepath = 'output/toro3d.nc'
+        import os
+        os.makedirs(output_dir, exist_ok=True)
+        filepath = os.path.join(output_dir, 'toro3d.nc')
         ds = Dataset(filepath, 'w', format='NETCDF4_CLASSIC')
         
         # ============================================================
