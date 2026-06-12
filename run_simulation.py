@@ -29,6 +29,12 @@ def main():
         if arg == '--sounding' and i + 1 < len(sys.argv):
             config.thermodynamics.sounding_file = sys.argv[i+1]
     
+    # Check for custom output dir
+    output_dir = 'output'
+    for i, arg in enumerate(sys.argv):
+        if arg == '--out' and i + 1 < len(sys.argv):
+            output_dir = sys.argv[i+1]
+            
     if '--1d' in sys.argv:
         # Modelo 1D legado
         from core.simulation import ToroSimulation
@@ -36,18 +42,18 @@ def main():
         print("  MODELO TORÓ v1.0 (1D legado)")
         print("=" * 60)
         sim = ToroSimulation(config)
-        sim.run(output_dir='output', verbose=True)
+        sim.run(output_dir=output_dir, verbose=True)
     else:
         # Modelo 3D com θ_ρ (padrão)
         from core.simulation3d import ToroSimulation3D
         sim = ToroSimulation3D(config)
-        sim.run()
+        sim.run(output_dir=output_dir)
     
     print("\n" + "=" * 60)
     print("  SIMULAÇÃO COMPLETA")
-    print("  Resultados em: output/results.json")
-    print("  NetCDF em: output/toro3d.nc")
-    print("  Som em: output/toro_sound.wav")
+    print(f"  Resultados em: {output_dir}/results.json")
+    print(f"  NetCDF em: {output_dir}/toro3d.nc")
+    print(f"  Som em: {output_dir}/toro_sound.wav")
     print("=" * 60)
 
 

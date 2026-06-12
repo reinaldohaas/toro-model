@@ -303,6 +303,7 @@ if __name__ == '__main__':
     start = 0
     end = None
     fps = 20
+    nc_path = 'output/toro3d.nc'
     for i, arg in enumerate(sys.argv[1:]):
         if arg == '--start':
             start = int(sys.argv[i+2])
@@ -310,9 +311,11 @@ if __name__ == '__main__':
             end = int(sys.argv[i+2])
         elif arg == '--fps':
             fps = int(sys.argv[i+2])
-    
-    print("\n  Carregando NetCDF...")
-    data = load_nc('output/toro3d.nc')
+        elif arg == '--in':
+            nc_path = sys.argv[i+2]
+            
+    print(f"\n  Carregando NetCDF de {nc_path}...")
+    data = load_nc(nc_path)
     
     render(data, start_frame=start, end_frame=end, fps=fps)
     
