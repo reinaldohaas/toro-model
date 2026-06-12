@@ -1,0 +1,144 @@
+{
+    "metadata": {
+        "latitude": -27.0991,
+        "longitude": -49.6215,
+        "date": "2020-12-17",
+        "time": "03:00",
+        "model": "ERA5 via Copernicus CDS"
+    },
+    "levels": {
+        "1000": {
+            "temperature": 23.515649414062523,
+            "relative_humidity": 96.86550903320312,
+            "geopotential_height": 127.03592715147376,
+            "u_component": -1.73651123046875,
+            "v_component": -0.1422271728515625
+        },
+        "975": {
+            "temperature": 22.057824707031273,
+            "relative_humidity": 96.99714660644531,
+            "geopotential_height": 343.641226951227,
+            "u_component": -1.69866943359375,
+            "v_component": -0.1214447021484375
+        },
+        "950": {
+            "temperature": 20.610955810546898,
+            "relative_humidity": 97.98065185546875,
+            "geopotential_height": 566.5168852258416,
+            "u_component": -3.2969512939453125,
+            "v_component": -0.739227294921875
+        },
+        "925": {
+            "temperature": 19.263665771484398,
+            "relative_humidity": 99.76631164550781,
+            "geopotential_height": 797.1699210484722,
+            "u_component": -5.75830078125,
+            "v_component": -2.3718719482421875
+        },
+        "900": {
+            "temperature": 18.370721435546898,
+            "relative_humidity": 98.5897216796875,
+            "geopotential_height": 1033.2877992867086,
+            "u_component": -6.0583648681640625,
+            "v_component": -3.3330841064453125
+        },
+        "850": {
+            "temperature": 16.094049072265648,
+            "relative_humidity": 90.97845458984375,
+            "geopotential_height": 1523.1903383163467,
+            "u_component": -5.5534210205078125,
+            "v_component": -3.78900146484375
+        },
+        "800": {
+            "temperature": 13.308923339843773,
+            "relative_humidity": 84.95263671875,
+            "geopotential_height": 2037.5559091279897,
+            "u_component": -3.70562744140625,
+            "v_component": -2.758209228515625
+        },
+        "700": {
+            "temperature": 5.765924072265648,
+            "relative_humidity": 88.5908203125,
+            "geopotential_height": 3148.0858174045165,
+            "u_component": -1.6205596923828125,
+            "v_component": -4.9336395263671875
+        },
+        "600": {
+            "temperature": -1.8227905273437273,
+            "relative_humidity": 94.12646484375,
+            "geopotential_height": 4392.173853329119,
+            "u_component": 5.8087005615234375,
+            "v_component": -11.808334350585938
+        },
+        "500": {
+            "temperature": -6.831518554687477,
+            "relative_humidity": 98.31980895996094,
+            "geopotential_height": 5831.746665527984,
+            "u_component": 14.099105834960938,
+            "v_component": -11.7655029296875
+        },
+        "400": {
+            "temperature": -16.966772460937477,
+            "relative_humidity": 53.13043212890625,
+            "geopotential_height": 7542.434534219127,
+            "u_component": 18.454269409179688,
+            "v_component": -0.7761383056640625
+        },
+        "300": {
+            "temperature": -31.27165832519529,
+            "relative_humidity": 98.10380554199219,
+            "geopotential_height": 9640.441690077652,
+            "u_component": 26.042098999023438,
+            "v_component": -7.0948638916015625
+        },
+        "250": {
+            "temperature": -41.61771240234373,
+            "relative_humidity": 83.24281311035156,
+            "geopotential_height": 10904.29708412149,
+            "u_component": 27.681488037109375,
+            "v_component": -4.6111297607421875
+        },
+        "200": {
+            "temperature": -53.98729553222654,
+            "relative_humidity": 67.10710144042969,
+            "geopotential_height": 12374.778849046312,
+            "u_component": 28.473358154296875,
+            "v_component": -9.925399780273438
+        },
+        "150": {
+            "temperature": -66.39523925781248,
+            "relative_humidity": 48.89263916015625,
+            "geopotential_height": 14165.8402716524,
+            "u_component": 26.98382568359375,
+            "v_component": -4.6685028076171875
+        },
+        "100": {
+            "temperature": -72.96652832031248,
+            "relative_humidity": 30.309280395507812,
+            "geopotential_height": 16571.376310972657,
+            "u_component": 13.812728881835938,
+            "v_component": -1.4376220703125
+        },
+        "70": {
+            "temperature": -70.28059997558591,
+            "relative_humidity": 13.512393951416016,
+            "geopotential_height": 18677.255994656687,
+            "u_component": 3.570648193359375,
+            "v_component": -3.1013336181640625
+        },
+        "50": {
+            "temperature": -66.69005432128904,
+            "relative_humidity": 5.374781608581543,
+            "geopotential_height": 20709.327344200112,
+            "u_component": -8.066024780273438,
+            "v_component": 0.378936767578125
+        },
+        "30": {
+            "temperature": -59.04601135253904,
+            "relative_humidity": 1.0966033935546875,
+            "geopotential_height": 23857.414356584562,
+            "u_component": -10.0919189453125,
+            "v_component": 5.1559295654296875
+        }
+    }
+}
