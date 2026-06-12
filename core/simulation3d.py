@@ -255,21 +255,33 @@ class ToroSimulation3D:
         exner_3d = self.grid.exner_3d
         self.theta_rho += pert / exner_3d
         
-        # Convergência horizontal — vento radial na camada 0-2km
-        # Convergência conduz ar para o centro, alimentando a ascendente
-        z_conv_top = 2000.0  # m
-        V_conv = 5.0  # m/s — amplitude
+        # Vórtice de Rankine Vertical (Stage 2 - EOCE)
+        # Substituindo a convergência puramente radial por rotação tangencial
+        z_vortex_top = 4000.0  # m
+        V_max = 70.0  # m/s — velocidade tangencial máxima
+        R_max = 1000.0  # m — raio de máxima velocidade (núcleo)
         
         dx_c = self.grid.X - xc
         dy_c = self.grid.Y - yc
-        r_horiz = np.sqrt(dx_c**2 + dy_c**2 + 1.0)  # +1 para evitar /0
+        r_horiz = np.sqrt(dx_c**2 + dy_c**2)
+        r_horiz_safe = np.where(r_horiz == 0, 1.0, r_horiz)
         
-        # Convergência decai com altitude
-        z_factor = np.maximum(0, 1.0 - self.grid.Z / z_conv_top)
+        # Perfil do Vórtice de Rankine (v_theta)
+        # r < R_max: corpo rígido (v ~ r)
+        # r >= R_max: vórtice potencial (v ~ 1/r)
+        v_theta = np.where(r_horiz < R_max,
+                           V_max * (r_horiz / R_max),
+                           V_max * (R_max / r_horiz_safe))
+                           
+        # Decaimento do vórtice com a altitude
+        z_factor = np.maximum(0, 1.0 - self.grid.Z / z_vortex_top)
+        v_theta_3d = v_theta * z_factor
         
-        # Vento convergente (aponta para o centro)
-        self.u = -V_conv * (dx_c / r_horiz) * z_factor
-        self.v = -V_conv * (dy_c / r_horiz) * z_factor
+        # Componentes u e v para rotação tangencial (anti-horário)
+        # Adicionamos também uma pequena convergência radial (10% do v_theta) para alimentar o centro
+        conv_factor = 0.1
+        self.u = (-v_theta_3d * (dy_c / r_horiz_safe)) - (conv_factor * v_theta_3d * (dx_c / r_horiz_safe))
+        self.v = (v_theta_3d * (dx_c / r_horiz_safe)) - (conv_factor * v_theta_3d * (dy_c / r_horiz_safe))
         
         # Carregar sondagem se existir, ou usar perfil analítico
         if self.config.thermodynamics.sounding_file and os.path.exists(self.config.thermodynamics.sounding_file):
@@ -285,7 +297,7 @@ class ToroSimulation3D:
             ) * np.ones(self.shape) * 0.3  # Fração modesta
         
         print(f"  Perturbação: +{dT_pert:.1f}K, R_bolha={R_bubble:.0f}m")
-        print(f"  Convergência: V={V_conv:.0f}m/s até z={z_conv_top:.0f}m")
+        print(f"  Vórtice Rankine (Vertical): V_max={V_max:.0f}m/s, R_max={R_max:.0f}m até z={z_vortex_top:.0f}m")
         if self.config.thermodynamics.sounding_file:
             print(f"  Vento ambiente carregado da sondagem ERA5")
         else:
