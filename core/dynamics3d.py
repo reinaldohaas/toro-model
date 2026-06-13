@@ -173,7 +173,7 @@ def compute_pressure_poisson(buoyancy: np.ndarray, rho_bar: np.ndarray,
     dz2 = dz * dz
     
     coeff = 1.0 / (2.0/dx2 + 2.0/dy2 + 2.0/dz2)
-    omega = 1.2  # SOR over-relaxation
+    omega = 1.0  # ATENÇÃO: Jacobi Over-Relaxation (omega > 1) é instável! Usar Jacobi padrão (omega = 1.0)
     
     for _ in range(n_iter):
         # Vizinhos (periódico em x, y)

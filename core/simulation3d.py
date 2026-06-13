@@ -459,7 +459,7 @@ class ToroSimulation3D:
                 buoyancy, rho_bar,
                 self.u, self.v, self.w,
                 self.dx, self.dy, self.dz,
-                n_iter=30
+                n_iter=100
             )
             
             # ============================================================
