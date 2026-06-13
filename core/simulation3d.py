@@ -36,7 +36,7 @@ from core.theta_rho import (
 from core.dynamics3d import (
     advect_3d, compute_pressure_poisson,
     compute_momentum_tendency, compute_divergence,
-    compute_adaptive_dt, compute_cfl
+    compute_adaptive_dt, compute_cfl, apply_diffusion
 )
 from core.microphysics_bulk import step_microphysics_bulk
 from core.collapse import HydraulicPiston, compute_piston_mass
@@ -473,12 +473,17 @@ class ToroSimulation3D:
             )
             
             # ============================================================
-            # 7. Advecção de θ_ρ e hidrometeoros
+            # 7. Advecção e difusão de θ_ρ e hidrometeoros
             # ============================================================
             dtheta_adv = advect_3d(self.theta_rho, self.u, self.v, self.w,
                                     self.dx, self.dy, self.dz)
+            dtheta_diff = apply_diffusion(self.theta_rho, cfg_diff.K_h, cfg_diff.K_v,
+                                          self.dx, self.dy, self.dz)
+            
             dqv_adv = advect_3d(self.qv, self.u, self.v, self.w,
                                 self.dx, self.dy, self.dz)
+            dqv_diff = apply_diffusion(self.qv, cfg_diff.K_h, cfg_diff.K_v,
+                                       self.dx, self.dy, self.dz)
             
             # ============================================================
             # 8. Euler forward
@@ -486,8 +491,8 @@ class ToroSimulation3D:
             self.u += du_dt * dt
             self.v += dv_dt * dt
             self.w += dw_dt * dt
-            self.theta_rho += dtheta_adv * dt
-            self.qv += dqv_adv * dt
+            self.theta_rho += (dtheta_adv + dtheta_diff) * dt
+            self.qv += (dqv_adv + dqv_diff) * dt
             
             # Damping de Rayleigh (Sponge layer) nas fronteiras
             if hasattr(self.config, 'sponge') and self.config.sponge.enable:
