@@ -385,7 +385,7 @@ def _collisional_breakup(
 
 def _sedimentation(
     qr: F3D, qs: F3D, qg: F3D, rho: F3D, dz: float, dt: float,
-) -> tuple[F3D, F3D, F3D, F3D]:
+) -> tuple[F3D, F3D, F3D, F3D, F3D, F3D]:
     """First-order upwind sedimentation along the z-axis (axis=2).
 
     Terminal fall velocities:
@@ -405,7 +405,7 @@ def _sedimentation(
 
     Returns
     -------
-    qr_new, qs_new, qg_new, precip_rate (kg/m²/s at surface)
+    qr_new, qs_new, qg_new, precip_rain, precip_snow, precip_grau (kg/m²/s at surface)
     """
     # ---- rain ----
     qr_safe = np.maximum(qr, _QMIN)
@@ -447,9 +447,8 @@ def _sedimentation(
     precip_rain = rho_sfc * qr[:, :, 0] * vt_r[:, :, 0]
     precip_snow = rho_sfc * qs[:, :, 0] * vt_s[:, :, 0]
     precip_grau = rho_sfc * qg[:, :, 0] * vt_g[:, :, 0]
-    precip_rate = precip_rain + precip_snow + precip_grau  # 2-D (nx, ny)
 
-    return qr_new, qs_new, qg_new, precip_rate
+    return qr_new, qs_new, qg_new, precip_rain, precip_snow, precip_grau
 
 
 # ============================================================================
@@ -616,7 +615,7 @@ def step_microphysics_bulk(
     # ------------------------------------------------------------------
     # 7. Sedimentation (rain, snow, graupel)
     # ------------------------------------------------------------------
-    qr, qs, qg, precip_rate = _sedimentation(qr, qs, qg, rho, dz, dt)
+    qr, qs, qg, precip_rain, precip_snow, precip_grau = _sedimentation(qr, qs, qg, rho, dz, dt)
 
     # ------------------------------------------------------------------
     # 8. Melting (above 0 °C)
@@ -641,5 +640,8 @@ def step_microphysics_bulk(
         'dq_freeze': dq_freeze_total,
         'sip_rate': sip_rate,
         'dm_rime': dm_rime,
-        'precip_rate': precip_rate,
+        'precip_rain': precip_rain,
+        'precip_snow': precip_snow,
+        'precip_grau': precip_grau,
+        'precip_rate': precip_rain + precip_snow + precip_grau,
     }
