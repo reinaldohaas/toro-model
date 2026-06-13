@@ -103,6 +103,9 @@ class ToroSimulation3D:
         # Pressão perturbação
         self.p_prime = np.zeros(self.shape)
         
+        # Precipitação acumulada na superfície (2D: nx, ny)
+        self.precip_acc = np.zeros((self.grid.nx, self.grid.ny))
+        
         # ================================================================
         # HISTÓRICO
         # ================================================================
@@ -132,6 +135,7 @@ class ToroSimulation3D:
             'vil_qs': [],
             'vil_qg': [],
             'vil_total': [],
+            'precip_acc': [],
         }
         self._snap_interval = 5.0  # s — snapshot a cada 5s (alta resolução)
         self._snap_next = 0.0
@@ -433,6 +437,9 @@ class ToroSimulation3D:
             self.qs = micro['qs']
             self.qg = micro['qg']
             
+            # Acumular precipitação na superfície (kg/m² = mm)
+            self.precip_acc += micro['precip_rate'] * dt
+            
             dq_cond = micro['dq_cond']
             dq_freeze = micro['dq_freeze']
             
@@ -610,6 +617,7 @@ class ToroSimulation3D:
                 self.snapshots['vil_qs'].append(vil_qs)
                 self.snapshots['vil_qg'].append(vil_qg)
                 self.snapshots['vil_total'].append(vil_total)
+                self.snapshots['precip_acc'].append(self.precip_acc.copy())
                 
                 self._snap_next += self._snap_interval
         
@@ -1093,6 +1101,7 @@ class ToroSimulation3D:
         write_3d_time('VIL_QS', self.snapshots['vil_qs'], 'kg m-2', 'Vertically Integrated Snow')
         write_3d_time('VIL_QG', self.snapshots['vil_qg'], 'kg m-2', 'Vertically Integrated Graupel')
         write_3d_time('VIL_TOTAL', self.snapshots['vil_total'], 'kg m-2', 'Total Vertically Integrated Liquid/Solid Water')
+        write_3d_time('PRECIP_ACC', self.snapshots['precip_acc'], 'kg m-2', 'Accumulated Surface Precipitation')
         
         # ============================================================
         # Campos 3D estaticos: (z, y, x) — estado final
