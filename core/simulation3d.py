@@ -126,6 +126,12 @@ class ToroSimulation3D:
             'qg': [],
             'theta_rho': [],
             'p_prime': [],
+            'vil_qc': [],
+            'vil_qr': [],
+            'vil_qi': [],
+            'vil_qs': [],
+            'vil_qg': [],
+            'vil_total': [],
         }
         self._snap_interval = 5.0  # s — snapshot a cada 5s (alta resolução)
         self._snap_next = 0.0
@@ -588,6 +594,23 @@ class ToroSimulation3D:
                 self.snapshots['qg'].append((self.qg * 1000).copy())
                 self.snapshots['theta_rho'].append(self.theta_rho.copy())
                 self.snapshots['p_prime'].append(self.p_prime.copy())
+                
+                # Vertically Integrated Liquid/Solid (VIL)
+                rho_dz = (self.grid.rho_bar_z * self.dz)[np.newaxis, np.newaxis, :]
+                vil_qc = np.sum(self.qc * rho_dz, axis=2)
+                vil_qr = np.sum(self.qr * rho_dz, axis=2)
+                vil_qi = np.sum(self.qi * rho_dz, axis=2)
+                vil_qs = np.sum(self.qs * rho_dz, axis=2)
+                vil_qg = np.sum(self.qg * rho_dz, axis=2)
+                vil_total = vil_qc + vil_qr + vil_qi + vil_qs + vil_qg
+                
+                self.snapshots['vil_qc'].append(vil_qc)
+                self.snapshots['vil_qr'].append(vil_qr)
+                self.snapshots['vil_qi'].append(vil_qi)
+                self.snapshots['vil_qs'].append(vil_qs)
+                self.snapshots['vil_qg'].append(vil_qg)
+                self.snapshots['vil_total'].append(vil_total)
+                
                 self._snap_next += self._snap_interval
         
         wall_time = time_module.time() - start_wall
@@ -1045,6 +1068,31 @@ class ToroSimulation3D:
                  'Pa', 'Pressure perturbation')
         
         print(f"  Campos 4D: {n_snaps} frames x 7 vars (time,z,y,x)")
+        
+        # ============================================================
+        # Campos 3D no tempo: (time, y, x) — VIL
+        # ============================================================
+        def write_3d_time(vname, snap_list, units, long_name, standard_name=None):
+            v = ds.createVariable(vname, 'f4', ('time', 'y', 'x'),
+                                  zlib=True, complevel=4)
+            v.units = units
+            v.long_name = long_name
+            if standard_name:
+                v.standard_name = standard_name
+            v.coordinates = 'longitude latitude'
+            v.grid_mapping = 'crs'
+            
+            if n_snaps > 0 and len(snap_list) == n_snaps:
+                for ti in range(n_snaps):
+                    # snap_list[ti] shape: (nx, ny) -> transpor para (ny, nx)
+                    v[ti, :, :] = snap_list[ti].T
+                    
+        write_3d_time('VIL_QC', self.snapshots['vil_qc'], 'kg m-2', 'Vertically Integrated Cloud Water')
+        write_3d_time('VIL_QR', self.snapshots['vil_qr'], 'kg m-2', 'Vertically Integrated Rain Water')
+        write_3d_time('VIL_QI', self.snapshots['vil_qi'], 'kg m-2', 'Vertically Integrated Cloud Ice')
+        write_3d_time('VIL_QS', self.snapshots['vil_qs'], 'kg m-2', 'Vertically Integrated Snow')
+        write_3d_time('VIL_QG', self.snapshots['vil_qg'], 'kg m-2', 'Vertically Integrated Graupel')
+        write_3d_time('VIL_TOTAL', self.snapshots['vil_total'], 'kg m-2', 'Total Vertically Integrated Liquid/Solid Water')
         
         # ============================================================
         # Campos 3D estaticos: (z, y, x) — estado final
