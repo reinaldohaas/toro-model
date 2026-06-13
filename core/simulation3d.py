@@ -303,6 +303,52 @@ class ToroSimulation3D:
         else:
             print(f"  Cisalhamento: du/dz={du_dz*1e3:.1f}×10⁻³ s⁻¹")
         print(f"  θ_ρ range: [{self.theta_rho.min():.1f}, {self.theta_rho.max():.1f}] K")
+        
+        # ============================================================
+        # Configurar Camada de Esponja (Sponge Layer)
+        # ============================================================
+        if hasattr(self.config, 'sponge') and self.config.sponge.enable:
+            self.u_bar_3d = self.u.copy()
+            self.v_bar_3d = self.v.copy()
+            self.theta_rho_bar_3d = self.theta_rho.copy()
+            
+            cfg_sp = self.config.sponge
+            
+            # Decaimento Z (topo)
+            f_z = np.zeros_like(self.grid.Z)
+            z_mask = self.grid.Z > cfg_sp.z_sponge_bottom
+            if np.any(z_mask):
+                z_sp_top = self.grid.Z.max()
+                normalized_z = (self.grid.Z[z_mask] - cfg_sp.z_sponge_bottom) / (z_sp_top - cfg_sp.z_sponge_bottom)
+                f_z[z_mask] = normalized_z ** 2
+                
+            # Decaimento XY (laterais)
+            f_x = np.zeros_like(self.grid.X)
+            x_min, x_max = self.grid.X.min(), self.grid.X.max()
+            mask_x_left = self.grid.X < (x_min + cfg_sp.xy_sponge_width)
+            mask_x_right = self.grid.X > (x_max - cfg_sp.xy_sponge_width)
+            if np.any(mask_x_left):
+                normalized_x = (x_min + cfg_sp.xy_sponge_width - self.grid.X[mask_x_left]) / cfg_sp.xy_sponge_width
+                f_x[mask_x_left] = normalized_x ** 2
+            if np.any(mask_x_right):
+                normalized_x = (self.grid.X[mask_x_right] - (x_max - cfg_sp.xy_sponge_width)) / cfg_sp.xy_sponge_width
+                f_x[mask_x_right] = normalized_x ** 2
+                
+            f_y = np.zeros_like(self.grid.Y)
+            y_min, y_max = self.grid.Y.min(), self.grid.Y.max()
+            mask_y_left = self.grid.Y < (y_min + cfg_sp.xy_sponge_width)
+            mask_y_right = self.grid.Y > (y_max - cfg_sp.xy_sponge_width)
+            if np.any(mask_y_left):
+                normalized_y = (y_min + cfg_sp.xy_sponge_width - self.grid.Y[mask_y_left]) / cfg_sp.xy_sponge_width
+                f_y[mask_y_left] = normalized_y ** 2
+            if np.any(mask_y_right):
+                normalized_y = (self.grid.Y[mask_y_right] - (y_max - cfg_sp.xy_sponge_width)) / cfg_sp.xy_sponge_width
+                f_y[mask_y_right] = normalized_y ** 2
+                
+            f_xy = np.maximum(f_x, f_y)
+            f_sponge = np.maximum(f_z, f_xy)
+            self.sponge_gamma = f_sponge * cfg_sp.damping_coef_max
+            print(f"  Sponge Layer ativada: Z > {cfg_sp.z_sponge_bottom:.0f}m e bordas XY ({cfg_sp.xy_sponge_width:.0f}m)")
     
     # ================================================================
     # FASE 1: SIMULAÇÃO 3D DA COLUNA ASCENDENTE
@@ -442,6 +488,13 @@ class ToroSimulation3D:
             self.w += dw_dt * dt
             self.theta_rho += dtheta_adv * dt
             self.qv += dqv_adv * dt
+            
+            # Damping de Rayleigh (Sponge layer) nas fronteiras
+            if hasattr(self.config, 'sponge') and self.config.sponge.enable:
+                self.u -= self.sponge_gamma * (self.u - self.u_bar_3d) * dt
+                self.v -= self.sponge_gamma * (self.v - self.v_bar_3d) * dt
+                self.w -= self.sponge_gamma * self.w * dt
+                self.theta_rho -= self.sponge_gamma * (self.theta_rho - self.theta_rho_bar_3d) * dt
             
             # Clamps de segurança — vento
             self.w = np.clip(self.w, -50, 50)   # w realista para supercélula

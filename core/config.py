@@ -139,6 +139,15 @@ class DynamicsConfig:
 
 
 @dataclass
+class SpongeConfig:
+    """Configuração da camada de amortecimento (Sponge Layer) de Rayleigh."""
+    enable: bool = True
+    z_sponge_bottom: float = 12000.0  # m — altura onde inicia a absorção no topo
+    xy_sponge_width: float = 1500.0   # m — largura da borda lateral de absorção
+    damping_coef_max: float = 0.1     # 1/s — coeficiente máximo
+
+
+@dataclass
 class CollapseConfig:
     """Configuração do colapso do pistão hidráulico."""
     R_piston: float = 200.0       # m — raio do pistão
@@ -215,6 +224,7 @@ class SimulationConfig:
     diffusion: DiffusionConfig = field(default_factory=DiffusionConfig)
     collapse: CollapseConfig = field(default_factory=CollapseConfig)
     acoustics: AcousticsConfig = field(default_factory=AcousticsConfig)
+    sponge: SpongeConfig = field(default_factory=SpongeConfig)
     seismic: SeismicConfig = field(default_factory=SeismicConfig)
     erosion: ErosionConfig = field(default_factory=ErosionConfig)
     location: LocationConfig = field(default_factory=LocationConfig)
