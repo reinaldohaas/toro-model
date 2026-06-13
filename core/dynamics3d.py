@@ -27,21 +27,33 @@ import numpy as np
 # ============================================================================
 
 def ddx(f: np.ndarray, dx: float) -> np.ndarray:
-    """∂f/∂x — diferença centrada, periódica em x (eixo 0).
-    
+    """∂f/∂x — diferença centrada, Neumann (zero-gradient) em x.
+
+    Fronteira aberta: ondas saem sem refletir de volta.
+    x=0:   ∂f/∂x = (f[1]  - f[0])   / dx  (one-sided)
+    x=max: ∂f/∂x = (f[-1] - f[-2])  / dx  (one-sided)
+
     Args:
         f: Array 3D (nx, ny, nz).
         dx: Espaçamento em x (m).
-    
+
     Returns:
         ∂f/∂x (nx, ny, nz).
     """
-    return (np.roll(f, -1, axis=0) - np.roll(f, 1, axis=0)) / (2.0 * dx)
+    result = np.empty_like(f)
+    result[1:-1, :, :] = (f[2:, :, :] - f[:-2, :, :]) / (2.0 * dx)
+    result[0,    :, :] = (f[1,  :, :] - f[0,   :, :]) / dx
+    result[-1,   :, :] = (f[-1, :, :] - f[-2,  :, :]) / dx
+    return result
 
 
 def ddy(f: np.ndarray, dy: float) -> np.ndarray:
-    """∂f/∂y — diferença centrada, periódica em y (eixo 1)."""
-    return (np.roll(f, -1, axis=1) - np.roll(f, 1, axis=1)) / (2.0 * dy)
+    """∂f/∂y — diferença centrada, Neumann (zero-gradient) em y."""
+    result = np.empty_like(f)
+    result[:, 1:-1, :] = (f[:, 2:, :] - f[:, :-2, :]) / (2.0 * dy)
+    result[:, 0,    :] = (f[:, 1,  :] - f[:, 0,   :]) / dy
+    result[:, -1,   :] = (f[:, -1, :] - f[:, -2,  :]) / dy
+    return result
 
 
 def ddz(f: np.ndarray, dz: float) -> np.ndarray:
@@ -60,13 +72,21 @@ def ddz(f: np.ndarray, dz: float) -> np.ndarray:
 
 
 def d2dx2(f: np.ndarray, dx: float) -> np.ndarray:
-    """∂²f/∂x² — periódica em x."""
-    return (np.roll(f, -1, axis=0) - 2*f + np.roll(f, 1, axis=0)) / (dx * dx)
+    """∂²f/∂x² — Neumann (zero-gradient) em x."""
+    result = np.empty_like(f)
+    result[1:-1, :, :] = (f[2:, :, :] - 2*f[1:-1, :, :] + f[:-2, :, :]) / (dx * dx)
+    result[0,    :, :] = (f[1,  :, :] - f[0,  :, :]) / (dx * dx)   # one-sided
+    result[-1,   :, :] = (f[-2, :, :] - f[-1, :, :]) / (dx * dx)
+    return result
 
 
 def d2dy2(f: np.ndarray, dy: float) -> np.ndarray:
-    """∂²f/∂y² — periódica em y."""
-    return (np.roll(f, -1, axis=1) - 2*f + np.roll(f, 1, axis=1)) / (dy * dy)
+    """∂²f/∂y² — Neumann (zero-gradient) em y."""
+    result = np.empty_like(f)
+    result[:, 1:-1, :] = (f[:, 2:, :] - 2*f[:, 1:-1, :] + f[:, :-2, :]) / (dy * dy)
+    result[:, 0,    :] = (f[:, 1,  :] - f[:, 0,  :]) / (dy * dy)
+    result[:, -1,   :] = (f[:, -2, :] - f[:, -1, :]) / (dy * dy)
+    return result
 
 
 def d2dz2(f: np.ndarray, dz: float) -> np.ndarray:
@@ -86,18 +106,104 @@ def d2dz2(f: np.ndarray, dz: float) -> np.ndarray:
 def advect_3d(f: np.ndarray, u: np.ndarray, v: np.ndarray, w: np.ndarray,
               dx: float, dy: float, dz: float) -> np.ndarray:
     """Tendência advectiva: -u·∂f/∂x - v·∂f/∂y - w·∂f/∂z.
-    
-    Diferenças centradas, periódicas em x, y.
-    
+
+    Diferenças centradas com BC Neumann. Usar para θ_ρ, qv.
+
     Args:
         f: Campo escalar 3D (nx, ny, nz).
         u, v, w: Componentes do vento (nx, ny, nz).
         dx, dy, dz: Espaçamentos de grade (m).
-    
+
     Returns:
         Tendência advectiva (nx, ny, nz).
     """
     return -(u * ddx(f, dx) + v * ddy(f, dy) + w * ddz(f, dz))
+
+
+def advect_upwind_3d(f: np.ndarray, u: np.ndarray, v: np.ndarray, w: np.ndarray,
+                     dx: float, dy: float, dz: float) -> np.ndarray:
+    """Advecção van Leer (2ª ordem TVD) para escalares positivo-definidos.
+
+    Usa o limitador de fluxo van Leer — monotônico (sem overshoots negativos)
+    e muito menos difusivo que upwind de 1ª ordem. Ideal para hidrometeoros.
+
+    BC Neumann (zero-gradient) em todas as bordas.
+
+    Args:
+        f: Campo 3D (nx, ny, nz) — deve ser >= 0.
+        u, v, w: Componentes do vento (nx, ny, nz).
+        dx, dy, dz: Espaçamentos (m).
+
+    Returns:
+        Tendência df/dt (nx, ny, nz).
+    """
+
+    def _vl_flux_axis(f, vel, d, axis):
+        """Fluxo van Leer ao longo de um eixo."""
+        # Vizinhos com Neumann BC
+        fm = np.empty_like(f)  # f_{i-1}
+        fp = np.empty_like(f)  # f_{i+1}
+
+        sl = [slice(None)] * 3
+        sm1 = [slice(None)] * 3
+        sp1 = [slice(None)] * 3
+
+        # f_{i-1}
+        sl[axis] = slice(1, None)
+        sm1[axis] = slice(None, -1)
+        fm[tuple(sl)] = f[tuple(sm1)]
+        sl[axis] = 0; sm1[axis] = 0
+        fm[tuple(sl)] = f[tuple(sm1)]  # Neumann
+
+        # f_{i+1}
+        sl[axis] = slice(None, -1)
+        sp1[axis] = slice(1, None)
+        fp = np.empty_like(f)
+        fp[tuple(sl)] = f[tuple(sp1)]
+        sl[axis] = -1; sp1[axis] = -1
+        fp[tuple(sl)] = f[tuple(sp1)]  # Neumann
+
+        # Slopes (van Leer limiter): phi(r) = (r + |r|) / (1 + |r|)
+        delta_p = fp - f          # f_{i+1} - f_i
+        delta_m = f  - fm         # f_i - f_{i-1}
+        denom = np.where(np.abs(delta_p) > 1e-30, delta_p, 1e-30)
+        r = delta_m / denom
+        phi = (r + np.abs(r)) / (1.0 + np.abs(r))  # van Leer
+        slope = 0.5 * phi * delta_p                  # limited slope (centered)
+
+        # Reconstructed face values (upwind)
+        # u >= 0: use left cell + slope_left
+        f_left  = f  + 0.5 * phi * delta_m   # f_i + slope at i (upwind from left)
+        # u <  0: use right cell - slope_right
+        delta_p_r = fp - f
+        denom_r = np.where(np.abs(delta_m) > 1e-30, delta_m, 1e-30)
+        r_r = delta_p_r / denom_r
+        phi_r = (r_r + np.abs(r_r)) / (1.0 + np.abs(r_r))
+        f_right = fp - 0.5 * phi_r * delta_p_r  # f_{i+1} - slope at i+1 (upwind from right)
+
+        face_val = np.where(vel >= 0, f_left, f_right)
+        # Flux divergence: (F_{i+1/2} - F_{i-1/2}) / d
+        # Approximate via: vel * df/dx ≈ vel * (face_val - face_val_upstream) / d
+        # Use simple upwind flux: F = vel * face_val
+        # Flux at right face
+        F_right = vel * face_val
+        # Flux at left face (shift right face by -1)
+        F_left = np.empty_like(F_right)
+        sl_l = [slice(None)] * 3
+        sl_r = [slice(None)] * 3
+        sl_l[axis] = slice(1, None)
+        sl_r[axis] = slice(None, -1)
+        F_left[tuple(sl_l)] = F_right[tuple(sl_r)]
+        sl_l[axis] = 0; sl_r[axis] = 0
+        F_left[tuple(sl_l)] = np.where(vel[tuple(sl_l)] >= 0,
+                                        vel[tuple(sl_l)] * f[tuple(sl_l)],
+                                        vel[tuple(sl_l)] * f[tuple(sl_l)])  # inflow = 0 at boundary
+
+        return -(F_right - F_left) / d
+
+    return (_vl_flux_axis(f, u, dx, 0)
+            + _vl_flux_axis(f, v, dy, 1)
+            + _vl_flux_axis(f, w, dz, 2))
 
 
 # ============================================================================
@@ -176,30 +282,39 @@ def compute_pressure_poisson(buoyancy: np.ndarray, rho_bar: np.ndarray,
     omega = 1.0  # ATENÇÃO: Jacobi Over-Relaxation (omega > 1) é instável! Usar Jacobi padrão (omega = 1.0)
     
     for _ in range(n_iter):
-        # Vizinhos (periódico em x, y)
-        p_xp = np.roll(p_prime, -1, axis=0)
-        p_xm = np.roll(p_prime, 1, axis=0)
-        p_yp = np.roll(p_prime, -1, axis=1)
-        p_ym = np.roll(p_prime, 1, axis=1)
-        
-        # z: Neumann nas fronteiras
-        p_zp = np.zeros_like(p_prime)
-        p_zm = np.zeros_like(p_prime)
+        # --- x: Neumann (fronteira aberta) ---
+        p_xp = np.empty_like(p_prime)
+        p_xm = np.empty_like(p_prime)
+        p_xp[:-1, :, :] = p_prime[1:, :, :]
+        p_xp[-1,  :, :] = p_prime[-1, :, :]  # Neumann: dp/dx=0
+        p_xm[1:,  :, :] = p_prime[:-1, :, :]
+        p_xm[0,   :, :] = p_prime[0,  :, :]  # Neumann: dp/dx=0
+
+        # --- y: Neumann ---
+        p_yp = np.empty_like(p_prime)
+        p_ym = np.empty_like(p_prime)
+        p_yp[:, :-1, :] = p_prime[:, 1:, :]
+        p_yp[:, -1,  :] = p_prime[:, -1, :]  # Neumann
+        p_ym[:, 1:,  :] = p_prime[:, :-1, :]
+        p_ym[:, 0,   :] = p_prime[:, 0,  :]  # Neumann
+
+        # --- z: Neumann ---
+        p_zp = np.empty_like(p_prime)
+        p_zm = np.empty_like(p_prime)
         p_zp[:, :, :-1] = p_prime[:, :, 1:]
-        p_zp[:, :, -1] = p_prime[:, :, -1]  # Neumann: dp/dz=0
-        p_zm[:, :, 1:] = p_prime[:, :, :-1]
-        p_zm[:, :, 0] = p_prime[:, :, 0]    # Neumann: dp/dz=0
-        
-        # Atualização Jacobi com SOR
+        p_zp[:, :, -1]  = p_prime[:, :, -1]  # Neumann: dp/dz=0
+        p_zm[:, :, 1:]  = p_prime[:, :, :-1]
+        p_zm[:, :, 0]   = p_prime[:, :, 0]   # Neumann: dp/dz=0
+
         p_new = coeff * (
             (p_xp + p_xm) / dx2 +
             (p_yp + p_ym) / dy2 +
             (p_zp + p_zm) / dz2 -
             rhs
         )
-        
-        p_prime = (1 - omega) * p_prime + omega * p_new
-    
+
+        p_prime = p_new  # Jacobi puro (omega = 1.0)
+
     return p_prime
 
 

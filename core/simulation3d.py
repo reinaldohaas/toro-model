@@ -34,7 +34,7 @@ from core.theta_rho import (
     theta_rho_to_T, compute_qvs, latent_heating_theta
 )
 from core.dynamics3d import (
-    advect_3d, compute_pressure_poisson,
+    advect_3d, advect_upwind_3d, compute_pressure_poisson,
     compute_momentum_tendency, compute_divergence,
     compute_adaptive_dt, compute_cfl, apply_diffusion
 )
@@ -253,6 +253,10 @@ class ToroSimulation3D:
         """Inicializa a simulação com perturbação térmica + convergência."""
         print("Inicializando campos...")
         
+        # 1. Carregar sondagem se existir, definindo o estado base (theta_rho, qv)
+        if self.config.thermodynamics.sounding_file and os.path.exists(self.config.thermodynamics.sounding_file):
+            self._load_sounding()
+        
         # Centro do domínio
         xc = self.nx * self.dx / 2.0
         yc = self.ny * self.dy / 2.0
@@ -299,9 +303,8 @@ class ToroSimulation3D:
         self.u = (-v_theta_3d * (dy_c / r_horiz_safe)) - (conv_factor * v_theta_3d * (dx_c / r_horiz_safe))
         self.v = (v_theta_3d * (dx_c / r_horiz_safe)) - (conv_factor * v_theta_3d * (dy_c / r_horiz_safe))
         
-        # Carregar sondagem se existir, ou usar perfil analítico
+        # Carregar vento ambiente se houver sondagem
         if self.config.thermodynamics.sounding_file and os.path.exists(self.config.thermodynamics.sounding_file):
-            self._load_sounding()
             self.u += self.grid.broadcast_z(self.u_env_z) * np.ones(self.shape) * 0.5
             self.v += self.grid.broadcast_z(self.v_env_z) * np.ones(self.shape) * 0.5
         else:
@@ -370,36 +373,127 @@ class ToroSimulation3D:
     # FASE 1: SIMULAÇÃO 3D DA COLUNA ASCENDENTE
     # ================================================================
     
-    def run_phase1(self):
-        """Fase 1: Integração temporal 3D.
-        
-        Loop:
-            1. Microfísica → taxas de condensação/congelamento
-            2. Aquecimento latente → atualiza θ_ρ
-            3. Flutuabilidade B(θ_ρ)
-            4. Poisson → p'
-            5. Tendências de momento → du, dv, dw
-            6. Advecção de θ_ρ e hidrometeoros
-            7. Euler forward
+    def _dynamics_rhs(self, theta_rho, u, v, w, qv):
+        """RHS das equações de prognóstico para um estágio RK3.
+
+        NÃO inclui microfísica — esta já foi aplicada antes do loop RK3
+        (operador-split de Lie).  Calcula apenas:
+          • flutuabilidade B(θ_ρ)
+          • pressão perturbada p' (Poisson)
+          • tendências de momento (u, v, w)
+          • advecção + difusão de θ_ρ e q_v (centrada)
         """
+        cfg_diff      = self.config.diffusion
+        rho_bar       = self.grid.rho_bar_z
+        theta_rho_bar = self.grid.theta_rho_bar_z
+        exner_3d      = self.grid.exner_3d
+
+        # Carregamento actual dos hidrometeoros (não variam no RK3, pois
+        # a sua advecção é aplicada separadamente após os 3 estágios)
+        ql_total = self.qc + self.qr
+        qi_total = self.qi + self.qs + self.qg
+
+        # Flutuabilidade
+        theta_base     = theta_rho / (
+            1.0 + (R_v / R_d) * qv - ql_total - qi_total + 1e-30
+        )
+        theta_rho_full = compute_theta_rho(theta_base, qv, ql_total, qi_total)
+        buoyancy = np.clip(
+            compute_buoyancy_3d(theta_rho_full, theta_rho_bar), -2.0, 2.0
+        )
+
+        # Pressão perturbada (Poisson)
+        p_prime = compute_pressure_poisson(
+            buoyancy, rho_bar, u, v, w,
+            self.dx, self.dy, self.dz, n_iter=100
+        )
+        # Guarda para snapshot
+        self.p_prime = p_prime
+
+        # Tendências de momento
+        du_dt, dv_dt, dw_dt = compute_momentum_tendency(
+            u, v, w, p_prime, buoyancy, rho_bar,
+            self.dx, self.dy, self.dz,
+            K_h=cfg_diff.K_h, K_v=cfg_diff.K_v
+        )
+
+        # Advecção + difusão de θ_ρ e q_v (diferenças centradas)
+        dtheta = (advect_3d(theta_rho, u, v, w, self.dx, self.dy, self.dz)
+                  + apply_diffusion(theta_rho, cfg_diff.K_h, cfg_diff.K_v,
+                                    self.dx, self.dy, self.dz))
+        dqv    = (advect_3d(qv, u, v, w, self.dx, self.dy, self.dz)
+                  + apply_diffusion(qv, cfg_diff.K_h, cfg_diff.K_v,
+                                    self.dx, self.dy, self.dz))
+
+        return {'du': du_dt, 'dv': dv_dt, 'dw': dw_dt,
+                'dtheta': dtheta, 'dqv': dqv}
+
+    def _rk3_dynamics(self, dt):
+        """Integração RK3 Shu–Osher da dinâmica para um passo dt.
+
+        Coeficientes (Wicker & Skamarock 2002):
+          stage 1:  u*  = u0 + dt · F(u0)
+          stage 2:  u** = 3/4·u0 + 1/4·(u*  + dt·F(u*))
+          stage 3:  u'  = 1/3·u0 + 2/3·(u** + dt·F(u**))
+
+        A microfísica e o aquecimento latente são aplicados ANTES desta
+        função (operador-split de Lie), portanto F não os inclui.
+
+        A advecção van Leer dos hidrometeoros (positivo-definida) é
+        aplicada UMA vez ao final, usando o vento do estágio 3.
+        """
+        # ---- estado inicial (salvar cópias) ----
+        u0  = self.u.copy()
+        v0  = self.v.copy()
+        w0  = self.w.copy()
+        th0 = self.theta_rho.copy()
+        qv0 = self.qv.copy()
+
+        # ---- estágio 1 ----
+        r1 = self._dynamics_rhs(th0, u0, v0, w0, qv0)
+        u1  = u0  + dt * r1['du']
+        v1  = v0  + dt * r1['dv']
+        w1  = w0  + dt * r1['dw']
+        th1 = th0 + dt * r1['dtheta']
+        qv1 = qv0 + dt * r1['dqv']
+
+        # ---- estágio 2 ----
+        r2 = self._dynamics_rhs(th1, u1, v1, w1, qv1)
+        u2  = 0.75 * u0  + 0.25 * (u1  + dt * r2['du'])
+        v2  = 0.75 * v0  + 0.25 * (v1  + dt * r2['dv'])
+        w2  = 0.75 * w0  + 0.25 * (w1  + dt * r2['dw'])
+        th2 = 0.75 * th0 + 0.25 * (th1 + dt * r2['dtheta'])
+        qv2 = 0.75 * qv0 + 0.25 * (qv1 + dt * r2['dqv'])
+
+        # ---- estágio 3 (resultado final) ----
+        r3 = self._dynamics_rhs(th2, u2, v2, w2, qv2)
+        self.u         = (1/3) * u0  + (2/3) * (u2  + dt * r3['du'])
+        self.v         = (1/3) * v0  + (2/3) * (v2  + dt * r3['dv'])
+        self.w         = (1/3) * w0  + (2/3) * (w2  + dt * r3['dw'])
+        self.theta_rho = (1/3) * th0 + (2/3) * (th2 + dt * r3['dtheta'])
+        self.qv        = (1/3) * qv0 + (2/3) * (qv2 + dt * r3['dqv'])
+
+        # ---- advecção van Leer dos hidrometeoros (uma vez, com vento final) ----
+        # Usando vento do estágio 3 para consistência temporal.
+        # np.maximum garante positividade (monotonia).
+        for attr in ('qc', 'qr', 'qi', 'qs', 'qg'):
+            q = getattr(self, attr)
+            dq = advect_upwind_3d(q, self.u, self.v, self.w,
+                                  self.dx, self.dy, self.dz)
+            setattr(self, attr, np.maximum(q + dq * dt, 0.0))
+
+
+
+    def run_phase1(self):
+        """Fase 1: Integração temporal 3D via RK3."""
         print("\n" + "=" * 60)
-        print("FASE 1: DINÂMICA 3D — COLUNA ASCENDENTE")
+        print("FASE 1: DINÂMICA 3D — COLUNA ASCENDENTE (RK3)")
         print("=" * 60)
         
         cfg_time = self.config.time
-        cfg_diff = self.config.diffusion
-        
         t = 0.0
         step = 0
-        dt = cfg_time.dt_max
         t_output_next = 0.0
-        
-        # Perfis de referência
-        rho_bar = self.grid.rho_bar_z          # (nz,)
-        theta_rho_bar = self.grid.theta_rho_bar_z  # (nz,)
-        exner_3d = self.grid.exner_3d          # (nx, ny, nz)
-        p_bar_3d = self.grid.broadcast_z(self.grid.p_bar_z) * np.ones(self.shape)
-        
         start_wall = time_module.time()
         
         while t < cfg_time.t_total:
@@ -413,195 +507,123 @@ class ToroSimulation3D:
                 dt_min=cfg_time.dt_min,
                 dt_max=cfg_time.dt_max
             )
-            
             if t + dt > cfg_time.t_total:
                 dt = cfg_time.t_total - t
-            
+
             # ============================================================
-            # 1. Recuperar T de θ_ρ para microfísica
+            # 1-3. Microfísica  (operador-split: antes da dinâmica RK3)
             # ============================================================
+            exner_3d = self.grid.exner_3d
+            p_bar_3d = self.grid.broadcast_z(self.grid.p_bar_z) * np.ones(self.shape)
+            rho_3d   = self.grid.rho_bar_3d * np.ones(self.shape)
+
             ql_total = self.qc + self.qr
             qi_total = self.qi + self.qs + self.qg
-            T = theta_rho_to_T(self.theta_rho, exner_3d, self.qv, 
-                               ql_total, qi_total)
-            T = np.clip(T, 170.0, 350.0)  # Sanidade
-            
-            # ============================================================
-            # 2. Microfísica bulk
-            # ============================================================
-            rho_3d = self.grid.rho_bar_3d * np.ones(self.shape)
-            
+            T = np.clip(theta_rho_to_T(self.theta_rho, exner_3d, self.qv,
+                                       ql_total, qi_total), 170.0, 350.0)
+
             micro = step_microphysics_bulk(
                 T, p_bar_3d, self.qv, self.qc, self.qr,
                 self.qi, self.qs, self.qg, rho_3d, dt
             )
-            
             self.qv = micro['qv']
             self.qc = micro['qc']
             self.qr = micro['qr']
             self.qi = micro['qi']
             self.qs = micro['qs']
             self.qg = micro['qg']
-            
-            # Acumular precipitação na superfície (kg/m² = mm)
+
+            # Acumular precipitação
             self.precip_acc_qr += micro['precip_rain'] * dt
             self.precip_acc_qs += micro['precip_snow'] * dt
             self.precip_acc_qg += micro['precip_grau'] * dt
-            self.precip_acc += micro['precip_rate'] * dt
-            
-            dq_cond = micro['dq_cond']
-            dq_freeze = micro['dq_freeze']
-            
+            self.precip_acc    += micro['precip_rate'] * dt
+
+            # Aquecimento latente (ainda no split da microfísica)
+            self.theta_rho += latent_heating_theta(
+                micro['dq_cond'], micro['dq_freeze'], exner_3d
+            ) * dt
+
             # ============================================================
-            # 3. Aquecimento latente → θ_ρ
+            # 4. RK3 — dinâmica  (Wicker–Skamarock 2002, Shu–Osher form)
+            #
+            # α = [1, 1/4, 2/3]   β = [1, 1/4, 2/3]
+            #
+            # stage 1:  u* = u0 + dt·F(u0)
+            # stage 2:  u**= (3/4)·u0 + (1/4)·(u* + dt·F(u*))
+            # stage 3:  u' = (1/3)·u0 + (2/3)·(u**+ dt·F(u**))
             # ============================================================
-            dtheta_latent = latent_heating_theta(dq_cond, dq_freeze, exner_3d)
-            self.theta_rho += dtheta_latent * dt
-            
+            self._rk3_dynamics(dt)
+
             # ============================================================
-            # 4. Flutuabilidade B(θ_ρ)
+            # 5. Sponge + clamps (após o passo completo)
             # ============================================================
-            # θ_ρ já inclui o carregamento via q_l, q_i
-            # Atualizar θ_ρ com carregamento atual
-            theta_base = self.theta_rho / (
-                1.0 + (R_v / R_d) * self.qv - ql_total - qi_total + 1e-30
-            )
-            theta_rho_full = compute_theta_rho(
-                theta_base, self.qv, ql_total, qi_total
-            )
-            
-            buoyancy = compute_buoyancy_3d(theta_rho_full, theta_rho_bar)
-            buoyancy = np.clip(buoyancy, -2.0, 2.0)  # Estabilidade
-            buoyancy = np.nan_to_num(buoyancy, nan=0.0)
-            
-            # ============================================================
-            # 5. Poisson → p' (feedback de baixa pressão)
-            # ============================================================
-            self.p_prime = compute_pressure_poisson(
-                buoyancy, rho_bar,
-                self.u, self.v, self.w,
-                self.dx, self.dy, self.dz,
-                n_iter=100
-            )
-            
-            # ============================================================
-            # 6. Tendências de momento
-            # ============================================================
-            du_dt, dv_dt, dw_dt = compute_momentum_tendency(
-                self.u, self.v, self.w,
-                self.p_prime, buoyancy, rho_bar,
-                self.dx, self.dy, self.dz,
-                K_h=cfg_diff.K_h, K_v=cfg_diff.K_v
-            )
-            
-            # ============================================================
-            # 7. Advecção e difusão de θ_ρ e hidrometeoros
-            # ============================================================
-            dtheta_adv = advect_3d(self.theta_rho, self.u, self.v, self.w,
-                                    self.dx, self.dy, self.dz)
-            dtheta_diff = apply_diffusion(self.theta_rho, cfg_diff.K_h, cfg_diff.K_v,
-                                          self.dx, self.dy, self.dz)
-            
-            dqv_adv = advect_3d(self.qv, self.u, self.v, self.w,
-                                self.dx, self.dy, self.dz)
-            dqv_diff = apply_diffusion(self.qv, cfg_diff.K_h, cfg_diff.K_v,
-                                       self.dx, self.dy, self.dz)
-            
-            # ============================================================
-            # 8. Euler forward
-            # ============================================================
-            self.u += du_dt * dt
-            self.v += dv_dt * dt
-            self.w += dw_dt * dt
-            self.theta_rho += (dtheta_adv + dtheta_diff) * dt
-            self.qv += (dqv_adv + dqv_diff) * dt
-            
-            # Damping de Rayleigh (Sponge layer) nas fronteiras
             if hasattr(self.config, 'sponge') and self.config.sponge.enable:
-                self.u -= self.sponge_gamma * (self.u - self.u_bar_3d) * dt
-                self.v -= self.sponge_gamma * (self.v - self.v_bar_3d) * dt
-                self.w -= self.sponge_gamma * self.w * dt
+                self.u         -= self.sponge_gamma * (self.u - self.u_bar_3d) * dt
+                self.v         -= self.sponge_gamma * (self.v - self.v_bar_3d) * dt
+                self.w         -= self.sponge_gamma * self.w * dt
                 self.theta_rho -= self.sponge_gamma * (self.theta_rho - self.theta_rho_bar_3d) * dt
-            
-            # Clamps de segurança — vento
-            self.w = np.clip(self.w, -50, 50)   # w realista para supercélula
+
+            self.w = np.clip(self.w, -50, 50)
             self.u = np.clip(self.u, -50, 50)
             self.v = np.clip(self.v, -50, 50)
-            self.w[:, :, 0] = 0.0   # w=0 na superfície
-            self.w[:, :, -1] = 0.0  # w=0 no topo
-            
-            # Clamps de massa — CRÍTICO para estabilidade
-            # Valores máximos realistas para uma supercélula extrema:
-            #   q_v  ≤ 25 g/kg  (trópicos extremos)
-            #   q_c  ≤ 8 g/kg   (updraft vigoroso)
-            #   q_r  ≤ 10 g/kg  (chuva intensa)
-            #   q_i  ≤ 5 g/kg   (cristais de gelo)
-            #   q_s  ≤ 5 g/kg   (neve)
-            #   q_g  ≤ 15 g/kg  (granizo/graupel extremo)
-            # Total ≤ 30 g/kg para conservação de massa
+            self.w[:, :,  0] = 0.0   # w=0 superfície
+            self.w[:, :, -1] = 0.0   # w=0 topo
+
             self.qv = np.clip(self.qv, 0.0, 0.025)
             self.qc = np.clip(self.qc, 0.0, 0.008)
             self.qr = np.clip(self.qr, 0.0, 0.010)
             self.qi = np.clip(self.qi, 0.0, 0.005)
             self.qs = np.clip(self.qs, 0.0, 0.005)
             self.qg = np.clip(self.qg, 0.0, 0.015)
-            
-            # Conservação: q_total_hydro ≤ 30 g/kg
+
             q_total_hydro = self.qc + self.qr + self.qi + self.qs + self.qg
             excess_mask = q_total_hydro > 0.030
             if np.any(excess_mask):
-                scale = np.where(excess_mask, 
+                scale = np.where(excess_mask,
                                  0.030 / np.maximum(q_total_hydro, 1e-30),
                                  1.0)
-                self.qc *= scale
-                self.qr *= scale
-                self.qi *= scale
-                self.qs *= scale
-                self.qg *= scale
-            
-            # Sanitizar
-            self.theta_rho = np.nan_to_num(self.theta_rho, 
-                                            nan=self.grid.theta_rho_bar_z[0])
+                self.qc *= scale; self.qr *= scale; self.qi *= scale
+                self.qs *= scale; self.qg *= scale
+
+            self.theta_rho = np.nan_to_num(self.theta_rho,
+                                           nan=self.grid.theta_rho_bar_z[0])
             self.u = np.nan_to_num(self.u, nan=0.0)
             self.v = np.nan_to_num(self.v, nan=0.0)
             self.w = np.nan_to_num(self.w, nan=0.0)
-            
+
             # ============================================================
             # Diagnósticos
             # ============================================================
-            t += dt
+            t    += dt
             step += 1
-            
+
             if t >= t_output_next:
-                w_max = float(np.max(self.w))
-                qg_max = float(np.max(self.qg)) * 1000  # g/kg
-                qc_max = float(np.max(self.qc)) * 1000
-                sip = float(np.sum(micro.get('sip_rate', 0)))
-                
-                # Convergência horizontal (divergência negativa)
-                div = compute_divergence(
-                    self.u, self.v, self.w, rho_bar,
-                    self.dx, self.dy, self.dz
-                )
+                w_max    = float(np.max(self.w))
+                qg_max   = float(np.max(self.qg)) * 1000
+                qc_max   = float(np.max(self.qc)) * 1000
+                sip      = float(np.sum(micro.get('sip_rate', 0)))
+                rho_bar  = self.grid.rho_bar_z
+                div      = compute_divergence(self.u, self.v, self.w, rho_bar,
+                                             self.dx, self.dy, self.dz)
                 conv_max = float(-np.min(div))
-                
+
                 self.history['time'].append(float(t))
                 self.history['w_max'].append(w_max)
                 self.history['qg_max'].append(qg_max)
                 self.history['qc_max'].append(qc_max)
                 self.history['sip_total'].append(sip)
                 self.history['convergence_max'].append(conv_max)
-                
+
                 print(f"  t={t:6.1f}s | w_max={w_max:6.1f}m/s | "
                       f"qg={qg_max:.2f}g/kg | qc={qc_max:.2f}g/kg | "
                       f"conv={conv_max:.2e} | dt={dt:.2f}s")
-                
                 t_output_next += cfg_time.t_output
-            
-            # Salvar snapshot 3D para animação (tempos exatos para IDV)
+
+            # Snapshot 3D para IDV
             if t >= self._snap_next:
-                # Tempo exato (arredondado para múltiplo do intervalo)
-                exact_t = round(self._snap_next / self._snap_interval) * self._snap_interval
+                exact_t = (round(self._snap_next / self._snap_interval)
+                           * self._snap_interval)
                 self.snapshots['time'].append(exact_t)
                 self.snapshots['u'].append(self.u.copy())
                 self.snapshots['v'].append(self.v.copy())
@@ -610,16 +632,15 @@ class ToroSimulation3D:
                 self.snapshots['qg'].append((self.qg * 1000).copy())
                 self.snapshots['theta_rho'].append(self.theta_rho.copy())
                 self.snapshots['p_prime'].append(self.p_prime.copy())
-                
-                # Vertically Integrated Liquid/Solid (VIL)
-                rho_dz = (self.grid.rho_bar_z * self.dz)[np.newaxis, np.newaxis, :]
-                vil_qc = np.sum(self.qc * rho_dz, axis=2)
-                vil_qr = np.sum(self.qr * rho_dz, axis=2)
-                vil_qi = np.sum(self.qi * rho_dz, axis=2)
-                vil_qs = np.sum(self.qs * rho_dz, axis=2)
-                vil_qg = np.sum(self.qg * rho_dz, axis=2)
+
+                rho_dz    = (self.grid.rho_bar_z * self.dz)[np.newaxis, np.newaxis, :]
+                vil_qc    = np.sum(self.qc * rho_dz, axis=2)
+                vil_qr    = np.sum(self.qr * rho_dz, axis=2)
+                vil_qi    = np.sum(self.qi * rho_dz, axis=2)
+                vil_qs    = np.sum(self.qs * rho_dz, axis=2)
+                vil_qg    = np.sum(self.qg * rho_dz, axis=2)
                 vil_total = vil_qc + vil_qr + vil_qi + vil_qs + vil_qg
-                
+
                 self.snapshots['vil_qc'].append(vil_qc)
                 self.snapshots['vil_qr'].append(vil_qr)
                 self.snapshots['vil_qi'].append(vil_qi)
@@ -630,7 +651,7 @@ class ToroSimulation3D:
                 self.snapshots['precip_acc_qs'].append(self.precip_acc_qs.copy())
                 self.snapshots['precip_acc_qg'].append(self.precip_acc_qg.copy())
                 self.snapshots['precip_acc'].append(self.precip_acc.copy())
-                
+
                 self._snap_next += self._snap_interval
         
         wall_time = time_module.time() - start_wall
@@ -639,10 +660,15 @@ class ToroSimulation3D:
         print(f"  qg_max final: {float(np.max(self.qg))*1000:.2f} g/kg")
         
         # Salvar resultados da Fase 1
-        # Extrair coluna central para diagnósticos
         ic = self.nx // 2
         jc = self.ny // 2
-        
+
+        # Recompute T final para diagnósticos
+        ql_f = self.qc + self.qr
+        qi_f = self.qi + self.qs + self.qg
+        T = np.clip(theta_rho_to_T(self.theta_rho, self.grid.exner_3d,
+                                   self.qv, ql_f, qi_f), 170.0, 350.0)
+
         self.results['phase1'] = {
             'z': self.grid.z.tolist(),
             'w': self.w[ic, jc, :].tolist(),
@@ -650,22 +676,21 @@ class ToroSimulation3D:
             'theta_rho': self.theta_rho[ic, jc, :].tolist(),
             'theta_rho_bar': self.grid.theta_rho_bar_z.tolist(),
             'qv': self.qv[ic, jc, :].tolist(),
-            'qc': (self.qc[ic, jc, :] * 1000).tolist(),  # g/kg
+            'qc': (self.qc[ic, jc, :] * 1000).tolist(),
             'qr': (self.qr[ic, jc, :] * 1000).tolist(),
             'qi': (self.qi[ic, jc, :] * 1000).tolist(),
             'qs': (self.qs[ic, jc, :] * 1000).tolist(),
             'qg': (self.qg[ic, jc, :] * 1000).tolist(),
-            'lwc': ((self.qc[ic, jc, :] + self.qr[ic, jc, :]) * 
-                     self.grid.rho_bar_z * 1000).tolist(),  # g/m³
-            'iwc': ((self.qi[ic, jc, :] + self.qs[ic, jc, :] + 
-                      self.qg[ic, jc, :]) * 
-                     self.grid.rho_bar_z * 1000).tolist(),  # g/m³
+            'lwc': ((self.qc[ic, jc, :] + self.qr[ic, jc, :]) *
+                     self.grid.rho_bar_z * 1000).tolist(),
+            'iwc': ((self.qi[ic, jc, :] + self.qs[ic, jc, :] +
+                      self.qg[ic, jc, :]) *
+                     self.grid.rho_bar_z * 1000).tolist(),
             'w_max': float(np.max(self.w)),
             'history': self.history,
-            # Cortes para visualização
-            'w_xz': self.w[:, jc, :].tolist(),  # Corte x-z central
-            'w_yz': self.w[ic, :, :].tolist(),  # Corte y-z central
-            'w_xy_2km': self.w[:, :, min(6, self.nz-1)].tolist(),  # z≈2km
+            'w_xz': self.w[:, jc, :].tolist(),
+            'w_yz': self.w[ic, :, :].tolist(),
+            'w_xy_2km': self.w[:, :, min(6, self.nz-1)].tolist(),
             'qg_xz': (self.qg[:, jc, :] * 1000).tolist(),
             'u_xy_1km': self.u[:, :, min(3, self.nz-1)].tolist(),
             'v_xy_1km': self.v[:, :, min(3, self.nz-1)].tolist(),
