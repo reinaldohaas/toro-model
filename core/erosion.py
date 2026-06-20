@@ -149,9 +149,11 @@ def compute_selective_washing(P_impact, theta_slope, config: ErosionConfig):
 
 
 def compute_erosion_geometry(V_eroded, D_piston, config: ErosionConfig):
-    """Geometria da cicatriz de erosão linear.
+    """Geometria da cicatriz de erosão.
     
-    Canal retangular estreito (slot canyon instantâneo).
+    A queda vertical de um pistão hidráulico massivo em alta velocidade
+    age como um jato d'água gigantesco, cavando um "poço" (plunge pool / cratera)
+    no ponto de impacto.
     
     Args:
         V_eroded: Volume erodido (m³).
@@ -160,28 +162,26 @@ def compute_erosion_geometry(V_eroded, D_piston, config: ErosionConfig):
     
     Returns:
         dict:
-            'width': largura do canal (m)
-            'depth': profundidade do canal (m)
-            'length': comprimento do canal (m)
-            'aspect_ratio': profundidade/largura
+            'diameter': diâmetro do poço (m)
+            'depth': profundidade do poço escavado (m)
+            'aspect_ratio': profundidade/diâmetro
     """
-    # Largura ≈ diâmetro do pistão
-    width = D_piston
+    # A área de escavação principal corresponde à bitola do pistão
+    diameter = D_piston
+    A_crater = np.pi * (diameter / 2.0) ** 2
     
-    # Comprimento ≈ largura do desfiladeiro
-    length = width * 2.0  # Estimativa
-    
-    # Profundidade
-    if width > 0 and length > 0:
-        depth = V_eroded / (width * length)
+    # Profundidade calculada assumindo um poço cilíndrico
+    if A_crater > 0:
+        depth = V_eroded / A_crater
     else:
         depth = 0.0
     
-    aspect_ratio = depth / width if width > 0 else 0.0
+    aspect_ratio = depth / diameter if diameter > 0 else 0.0
     
     return {
-        'width': float(width),
+        'diameter': float(diameter),
+        'width': float(diameter),  # Mantido por compatibilidade
+        'length': float(diameter), # Mantido por compatibilidade
         'depth': float(depth),
-        'length': float(length),
         'aspect_ratio': float(aspect_ratio)
     }

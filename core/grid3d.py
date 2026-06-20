@@ -90,18 +90,23 @@ class Grid3D:
         z_tropopause: float = 12000.0,
         T_tropopause: float = 210.0,
         RH_sfc: float = 0.85,
+        sounding_file: str = None,
     ) -> None:
-        # --- store grid parameters ---
-        self.nx, self.ny, self.nz = nx, ny, nz
-        self.dx, self.dy, self.dz = dx, dy, dz
+        self.nx = nx
+        self.ny = ny
+        self.nz = nz
+        self.dx = dx
+        self.dy = dy
+        self.dz = dz
 
-        # --- store atmosphere parameters ---
+        # Base-state configuration (Idealized fallback)
         self.T_sfc = T_sfc
         self.p_sfc = p_sfc
         self.gamma = gamma
         self.z_tropopause = z_tropopause
         self.T_tropopause = T_tropopause
         self.RH_sfc = RH_sfc
+        self.sounding_file = sounding_file
 
         # --- 1-D coordinate arrays (cell centres) ---
         self.x: NDArray = np.arange(nx) * dx  # (nx,)
@@ -123,52 +128,73 @@ class Grid3D:
     #  Base-state profiles (vectorized)
     # ------------------------------------------------------------------ #
     def _build_base_state(self) -> None:
-        """Compute 1-D base-state thermodynamic profiles.
-
-        Temperature follows a constant lapse rate γ in the troposphere,
-        capped at T_tropopause (isothermal above).  Pressure is
-        integrated hydrostatically using the hypsometric equation in
-        each layer.  All computations are fully vectorized.
-        """
+        """Compute 1-D base-state thermodynamic profiles."""
         z = self.z  # (nz,)
 
-        # ---- temperature T̄(z) ----
-        T_bar = self.T_sfc - self.gamma * z
-        T_bar = np.maximum(T_bar, self.T_tropopause)
-        self.T_bar_z: NDArray = T_bar  # (nz,)
+        if hasattr(self, 'sounding_file') and self.sounding_file:
+            import json
+            from scipy.interpolate import interp1d
+            
+            with open(self.sounding_file, 'r') as f:
+                data = json.load(f)
+            
+            heights = []
+            temps = []
+            rhs = []
+            pressures = []
+            
+            for p_str, level_data in sorted(data['levels'].items(), key=lambda x: float(x[0]), reverse=True):
+                p_pa = float(p_str) * 100.0
+                h = level_data['geopotential_height']
+                t = level_data['temperature'] + 273.15
+                rh = level_data['relative_humidity'] / 100.0
+                heights.append(h)
+                temps.append(t)
+                rhs.append(rh)
+                pressures.append(p_pa)
+                
+            heights = np.array(heights)
+            
+            interp_T = interp1d(heights, temps, bounds_error=False, fill_value="extrapolate")
+            interp_RH = interp1d(heights, rhs, bounds_error=False, fill_value="extrapolate")
+            interp_p = interp1d(heights, pressures, bounds_error=False, fill_value="extrapolate")
+            
+            self.T_bar_z = interp_T(z)
+            self.p_bar_z = interp_p(z)
+            rh_bar_z = np.clip(interp_RH(z), 0.0, 1.0)
+            
+            self.exner_z = (self.p_bar_z / p_0) ** (R_d / c_p)
+            self.rho_bar_z = self.p_bar_z / (R_d * self.T_bar_z)
+            self.theta_bar_z = self.T_bar_z / self.exner_z
+            
+            # Compute qv_bar
+            T_c = self.T_bar_z - T_0
+            e_s = 611.2 * np.exp(17.67 * T_c / (T_c + 243.5))
+            qvs = epsilon * e_s / (self.p_bar_z - e_s)
+            self.qv_bar_z = rh_bar_z * qvs
+        else:
+            T_bar = self.T_sfc - self.gamma * z
+            T_bar = np.maximum(T_bar, self.T_tropopause)
+            self.T_bar_z: NDArray = T_bar
 
-        # ---- pressure p̄(z) — hydrostatic integration ----
-        # Use layer-mean temperature between successive levels.
-        # p(k) = p(k-1) * exp(-g*dz / (R_d * T_mean))
-        # Vectorized via cumulative sum of the exponent.
-        T_mid = 0.5 * (T_bar[:-1] + T_bar[1:])        # (nz-1,)
-        dp_exponent = -g * self.dz / (R_d * T_mid)     # (nz-1,)
-        log_p = np.empty(self.nz)
-        log_p[0] = np.log(self.p_sfc)
-        log_p[1:] = log_p[0] + np.cumsum(dp_exponent)
-        self.p_bar_z: NDArray = np.exp(log_p)           # (nz,)
+            T_mid = 0.5 * (T_bar[:-1] + T_bar[1:])
+            dp_exponent = -g * self.dz / (R_d * T_mid)
+            log_p = np.empty(self.nz)
+            log_p[0] = np.log(self.p_sfc)
+            log_p[1:] = log_p[0] + np.cumsum(dp_exponent)
+            self.p_bar_z: NDArray = np.exp(log_p)
 
-        # ---- Exner function Π(z) = (p/p₀)^(R_d/c_p) ----
-        self.exner_z: NDArray = (self.p_bar_z / p_0) ** (R_d / c_p)
+            self.exner_z: NDArray = (self.p_bar_z / p_0) ** (R_d / c_p)
+            self.rho_bar_z: NDArray = self.p_bar_z / (R_d * T_bar)
+            self.theta_bar_z: NDArray = T_bar / self.exner_z
 
-        # ---- density ρ̄(z) = p / (R_d * T) ----
-        self.rho_bar_z: NDArray = self.p_bar_z / (R_d * T_bar)
+            H_q = 8000.0
+            RH = np.maximum(self.RH_sfc * np.exp(-z / H_q), 0.05)
+            T_c = T_bar - T_0
+            e_s = 611.2 * np.exp(17.67 * T_c / (T_c + 243.5))
+            qvs = epsilon * e_s / (self.p_bar_z - e_s)
+            self.qv_bar_z: NDArray = RH * qvs
 
-        # ---- potential temperature θ̄(z) = T / Π ----
-        self.theta_bar_z: NDArray = T_bar / self.exner_z
-
-        # ---- base-state water-vapour mixing ratio q_v(z) ----
-        #   RH(z) = RH_sfc * exp(-z / H_q),  capped at 5 %
-        #   q_vs  = ε * e_s / (p - e_s),  Bolton (1980)
-        H_q = 8000.0  # moisture scale height (m)
-        RH = np.maximum(self.RH_sfc * np.exp(-z / H_q), 0.05)
-        T_c = T_bar - T_0  # Celsius
-        e_s = 611.2 * np.exp(17.67 * T_c / (T_c + 243.5))
-        qvs = epsilon * e_s / (self.p_bar_z - e_s)
-        self.qv_bar_z: NDArray = RH * qvs
-
-        # ---- density potential temperature θ_ρ(z) ----
-        #   θ_ρ = θ * (1 + R_v/R_d * q_v)  (dry-air loading only)
         self.theta_rho_bar_z: NDArray = self.theta_bar_z * (
             1.0 + (R_v / R_d) * self.qv_bar_z
         )

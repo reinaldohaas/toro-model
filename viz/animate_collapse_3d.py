@@ -478,7 +478,8 @@ def render_animation(snapshots, grid_info,
         )
         
         pl.add_text(
-            "Vale do Revólver — Presidente Getúlio, SC",
+            "Colapso do Pistão Hidráulico — Análise 3D\n"
+            "Valada São Paulo — Planalto Mirador, SC",
             position='lower_right', font_size=8, color='lightgray'
         )
         

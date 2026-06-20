@@ -15,7 +15,7 @@ from core.config import AcousticsConfig
 
 
 def generate_toro_sound(v_impact, D_piston, M_piston, config: AcousticsConfig,
-                         output_dir='output'):
+                         output_dir='output', max_dQ_dt=0.0):
     """Gera o som sintético do "Tó" — vagão desgovernado.
     
     4 componentes espectrais:
@@ -44,23 +44,27 @@ def generate_toro_sound(v_impact, D_piston, M_piston, config: AcousticsConfig,
     
     signal = np.zeros_like(t)
     
+    # Fator de escala baseado na explosão termodinâmica (Rimerização)
+    # Se max_dQ_dt > 0, o "Tó" representa o Trovão de Gelo nas nuvens
+    fator_termico = np.clip(max_dQ_dt / 5e11, 0.5, 3.0) if max_dQ_dt > 0 else 1.0
+    
     # ================================================================
     # Componente 1: Infrassom (1-5 Hz)
-    # Oscilação da coluna inteira
+    # Trovão de Rimerização: Expansão térmica maciça da coluna de ar
     # ================================================================
     f_infra = v_impact / D_piston if D_piston > 0 else 3.0
     f_infra = np.clip(f_infra, 1.0, 5.0)
-    A_infra = 0.6  # Amplitude relativa
+    A_infra = 0.6 * fator_termico  # Amplitude governada pelo calor latente
     tau_infra = 3.0  # s — decay
     
     signal += A_infra * np.sin(2 * np.pi * f_infra * t) * np.exp(-t / tau_infra)
     
     # ================================================================
-    # Componente 2: Estrondo grave (5-50 Hz)
-    # Impacto do pistão no vale
+    # Componente 2: Estrondo grave (5-50 Hz) - "O Tó"
+    # Trovão de Gelo (Onda de choque da liberação explosiva de L_f)
     # ================================================================
     f_boom = np.clip(v_impact / (D_piston * 0.3), 5.0, 50.0) if D_piston > 0 else 15.0
-    A_boom = 1.0  # Componente mais forte
+    A_boom = 1.0 * fator_termico # Estrondo da onda de choque no ar
     tau_boom = 2.0
     
     signal += A_boom * np.sin(2 * np.pi * f_boom * t) * np.exp(-t / tau_boom)
@@ -69,24 +73,28 @@ def generate_toro_sound(v_impact, D_piston, M_piston, config: AcousticsConfig,
     signal += A_boom * 0.25 * np.sin(2 * np.pi * f_boom * 3 * t) * np.exp(-t / (tau_boom * 0.5))
     
     # ================================================================
-    # Componente 3: Rumble (50-200 Hz)
-    # Fragmentação + reverberação no desfiladeiro
+    # Componente 3: Rumble (50-200 Hz) - "O Ró"
+    # Chegada do granizo e rolamento (Atrasado em relação ao Tó)
     # ================================================================
     f_rumble = 80.0
     A_rumble = 0.4
-    tau_rumble = 1.5
+    tau_rumble = 2.5
+    delay_ro = 0.8  # s - atraso do "Ró"
+    
+    t_ro = np.maximum(0, t - delay_ro)
+    env_ro = np.where(t < delay_ro, 0.0, (1.0 - np.exp(-t_ro / 0.3)) * np.exp(-t_ro / tau_rumble))
     
     # Múltiplas frequências para som de "vagão"
     for f in [60, 80, 120, 160]:
         phase = np.random.uniform(0, 2 * np.pi)
-        signal += (A_rumble / 4) * np.sin(2 * np.pi * f * t + phase) * np.exp(-t / tau_rumble)
+        signal += (A_rumble / 4) * np.sin(2 * np.pi * f * t + phase) * env_ro
     
     # ================================================================
-    # Componente 4: Crackle (200-2000 Hz)
-    # Quebra de árvores + rocha
+    # Componente 4: Crackle (200-2000 Hz) - "O Ró (pedras/arvores)"
+    # Quebra de árvores + rocha (Acompanha o Rumble)
     # ================================================================
-    A_crackle = 0.15
-    tau_crackle = 0.8
+    A_crackle = 0.25
+    tau_crackle = 2.0
     
     # Ruído filtrado para simular crackle
     noise = np.random.randn(len(t))
@@ -98,7 +106,8 @@ def generate_toro_sound(v_impact, D_piston, M_piston, config: AcousticsConfig,
     else:
         noise_filtered = noise
     
-    signal += A_crackle * noise_filtered * np.exp(-t / tau_crackle)
+    # Crackle usa o mesmo envelope atrasado do "Ró"
+    signal += A_crackle * noise_filtered * env_ro
     
     # ================================================================
     # Reverberação do desfiladeiro

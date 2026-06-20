@@ -64,7 +64,8 @@ class ToroSimulation3D:
         g3d = self.config.grid3d
         self.grid = Grid3D(
             nx=g3d.nx, ny=g3d.ny, nz=g3d.nz,
-            dx=g3d.dx, dy=g3d.dy, dz=g3d.dz
+            dx=g3d.dx, dy=g3d.dy, dz=g3d.dz,
+            sounding_file=self.config.thermodynamics.sounding_file
         )
         
         self.nx = g3d.nx
@@ -495,6 +496,7 @@ class ToroSimulation3D:
         step = 0
         t_output_next = 0.0
         start_wall = time_module.time()
+        self.max_dQ_dt = 0.0
         
         while t < cfg_time.t_total:
             # ============================================================
@@ -542,7 +544,16 @@ class ToroSimulation3D:
             # Aquecimento latente (ainda no split da microfísica)
             self.theta_rho += latent_heating_theta(
                 micro['dq_cond'], micro['dq_freeze'], exner_3d
-            ) * dt
+            )
+            
+            # Rastreador da Explosão Térmica (Para gerar o Tó)
+            # dq_freeze é kg/kg. L_f ≈ 334e3 J/kg
+            V_cell = self.dx * self.dy * self.dz
+            mass_cell = rho_3d * V_cell
+            E_freeze_step = np.sum(micro['dq_freeze'] * mass_cell * 334e3)
+            dQ_dt = E_freeze_step / dt
+            if dQ_dt > self.max_dQ_dt:
+                self.max_dQ_dt = dQ_dt
 
             # ============================================================
             # 4. RK3 — dinâmica  (Wicker–Skamarock 2002, Shu–Osher form)
@@ -670,6 +681,7 @@ class ToroSimulation3D:
                                    self.qv, ql_f, qi_f), 170.0, 350.0)
 
         self.results['phase1'] = {
+            'max_dQ_dt': float(self.max_dQ_dt),
             'z': self.grid.z.tolist(),
             'w': self.w[ic, jc, :].tolist(),
             'T': T[ic, jc, :].tolist(),
@@ -826,7 +838,8 @@ class ToroSimulation3D:
             D_piston=D_piston,
             M_piston=M_piston,
             config=cfg_ac,
-            output_dir=output_dir
+            output_dir=output_dir,
+            max_dQ_dt=getattr(self, 'max_dQ_dt', 0.0)
         )
         
         spl_1km = compute_spl(P_impact, A_piston=A_piston, distance=1000)

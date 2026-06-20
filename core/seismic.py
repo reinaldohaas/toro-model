@@ -2,7 +2,7 @@
 seismic.py — Modelo sísmico do impacto do Toró.
 
 Calcula magnitude Richter e gera sismograma sintético.
-Calibrado para M 2-3 conforme observações no Vale do Revólver.
+Calibrado para M 2-3 conforme observações na Valada São Paulo.
 
 Referências:
     - Gutenberg & Richter (1956): Energy-magnitude relation

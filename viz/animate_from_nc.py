@@ -260,7 +260,7 @@ def render(data, output_path='viz/toro_realdata_3d.mp4',
         )
         
         pl.add_text(
-            "Vale do Revólver — Presidente Getúlio, SC",
+            "Valada São Paulo — Planalto Mirador, SC",
             position='lower_right', font_size=8, color='lightgray'
         )
         

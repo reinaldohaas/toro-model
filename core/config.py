@@ -150,7 +150,7 @@ class SpongeConfig:
 @dataclass
 class CollapseConfig:
     """Configuração do colapso do pistão hidráulico."""
-    R_piston: float = 200.0       # m — raio do pistão
+    R_piston: float = 15.0        # m — raio do pistão (30m de diâmetro medido no Mirador)
     C_d_piston: float = 1.0       # coeficiente de arrasto do pistão
     c_sound_mix: float = 500.0    # m/s — velocidade do som na mistura água-gelo
     f_ice_cohesion: float = 0.6   # fração de gelo para coesão estrutural
@@ -187,7 +187,7 @@ class ErosionConfig:
     rho_soil: float = 1800.0      # kg/m³ — densidade do solo mineral
     rho_tree: float = 600.0       # kg/m³ — densidade da madeira
     M_eroded_min: float = 1000.0  # kg — massa mínima erodida (1 ton)
-    M_eroded_max: float = 10000.0 # kg — massa máxima erodida (10 ton)
+    M_eroded_max: float = 1e8    # kg — sem limite artificial severo para permitir poços profundos
     theta_slope: float = 0.3      # rad — inclinação do desfiladeiro (~17°)
     
     # Shields — tensão crítica para lavagem seletiva
@@ -200,9 +200,9 @@ class ErosionConfig:
 
 @dataclass
 class LocationConfig:
-    """Localização: Vale do Revólver, Presidente Getúlio, SC."""
-    name: str = "Vale do Revólver"
-    municipality: str = "Presidente Getúlio"
+    """Localização: Valada São Paulo, Planalto Mirador, SC."""
+    name: str = "Valada São Paulo"
+    municipality: str = "Planalto Mirador"
     state: str = "Santa Catarina"
     country: str = "Brasil"
     lat: float = -26.89           # graus
@@ -210,7 +210,6 @@ class LocationConfig:
     elevation: float = 200.0      # m — elevação do vale
     canyon_width: float = 200.0   # m — largura do desfiladeiro
     canyon_depth: float = 150.0   # m — profundidade do desfiladeiro
-
 
 @dataclass
 class SimulationConfig:
@@ -231,5 +230,5 @@ class SimulationConfig:
 
 
 def get_default_config() -> SimulationConfig:
-    """Retorna configuração padrão calibrada para o Vale do Revólver."""
+    """Retorna configuração padrão calibrada para a Valada São Paulo."""
     return SimulationConfig()
