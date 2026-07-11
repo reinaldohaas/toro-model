@@ -183,3 +183,94 @@ def compute_piston_mass(spectra, bin_grid, w, z_array, dz, config):
         'rho_mix': float(rho_mix),
         'H_piston': float(H_piston)
     }
+
+
+def compute_piston_mass_vortex(vortex, z_array, dz, T_env, p_env, q_v_env, config):
+    """Massa do pistão a partir da pressão no centro do vórtice (v6).
+
+    Compatível com a versão 6 do texto: o pistão NÃO é toda a coluna de
+    hidrometeoros (~10³ ton), e sim o condensado do funil no núcleo do
+    vórtice (~10 ton).
+
+    Física:
+        1. Balanço ciclostrófico (Rankine): Δp_c(z) = ρ(z) · V_max(z)²
+        2. Ar nublado (saturado) puxado para o centro expande
+           adiabaticamente: ΔT = (R_d/c_p) · T · Δp_c/p
+        3. O resfriamento condensa Δq_c = q_s(T, p) − q_s(T−ΔT, p−Δp_c)
+        4. O núcleo também ingere água de nuvem da parede
+           (q_c_core, entre z_LCL e z_freezing)
+        5. M_piston = Σ ρ · (Δq_c + q_c_ingerida) · A_core · dz
+           no trecho do funil (onde V_max(z) ≥ V_funnel_min)
+
+    Args:
+        vortex: TornadoVortex (fornece V_max_profile e pressure_deficit).
+        z_array: Array de altitudes (m).
+        dz: Resolução vertical (m).
+        T_env: Perfil de temperatura ambiente (K).
+        p_env: Perfil de pressão ambiente (Pa).
+        q_v_env: Perfil de razão de mistura de vapor (kg/kg).
+        config: SimulationConfig.
+
+    Returns:
+        dict:
+            'M_piston': massa do pistão (kg) — ~10 ton
+            'rho_mix': densidade do núcleo compactado (kg/m³)
+            'H_piston': extensão vertical do funil (m)
+            'dp_center_max': déficit máximo de pressão no centro (Pa)
+            'M_max_suspension': carga máxima sustentável Δp·A/g (kg)
+    """
+    from core.constants import R_d, c_p, g, q_sat, rho_air
+
+    R_piston = config.collapse.R_piston
+    A = np.pi * R_piston ** 2
+
+    z = np.asarray(z_array, dtype=float)
+    T = np.asarray(T_env, dtype=float)
+    p = np.asarray(p_env, dtype=float)
+
+    # 1. Déficit de pressão no centro (ciclostrófico)
+    rho = rho_air(T, p)
+    V_max_z = np.atleast_1d(vortex.V_max_profile(z))
+    dp = rho * V_max_z ** 2
+
+    # 2. Expansão adiabática do ar ao entrar no núcleo
+    dT = (R_d / c_p) * T * dp / p
+    T_core = T - dT
+    p_core = p - dp
+
+    # 3. Condensação no núcleo (ar saturado de nuvem → funil visível)
+    dq_c = np.maximum(0.0, q_sat(T, p) - q_sat(T_core, p_core))
+    # Limitado pelo vapor disponível
+    dq_c = np.minimum(dq_c, np.asarray(q_v_env, dtype=float))
+
+    # 4. Água de nuvem ingerida da parede (camada quente da nuvem)
+    q_c_core = getattr(config.collapse, 'q_c_core', 1.2e-3)
+    z_lcl = config.thermodynamics.z_LCL
+    z_frz = config.thermodynamics.z_freezing
+    in_cloud = (z >= z_lcl) & (z <= z_frz)
+    q_ing = np.where(in_cloud, q_c_core, 0.0)
+
+    # 5. Integração na extensão do funil
+    V_funnel_min = getattr(config.collapse, 'V_funnel_min', 5.0)
+    mask = (V_max_z >= V_funnel_min) & ((dq_c + q_ing) > 0.0)
+
+    M_piston = float(np.sum(rho[mask] * (dq_c[mask] + q_ing[mask])) * A * dz)
+
+    if np.any(mask):
+        z_f = z[mask]
+        H_piston = float(max(z_f[-1] - z_f[0], dz))
+    else:
+        H_piston = float(dz)
+
+    # Núcleo compacta-se ao cair; densidade física da mistura água-gelo
+    rho_mix = 500.0
+
+    dp_max = float(np.max(dp)) if dp.size else 0.0
+
+    return {
+        'M_piston': M_piston,
+        'rho_mix': rho_mix,
+        'H_piston': H_piston,
+        'dp_center_max': dp_max,
+        'M_max_suspension': dp_max * A / g,
+    }

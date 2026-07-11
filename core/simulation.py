@@ -33,7 +33,7 @@ from core.dynamics import (
     entrainment_mixing, check_collapse_criterion
 )
 from core.radar import compute_reflectivity, detect_bwer, generate_rhi_slice
-from core.collapse import HydraulicPiston, compute_piston_mass
+from core.collapse import HydraulicPiston, compute_piston_mass_vortex
 from core.acoustics import generate_toro_sound, compute_spl
 from core.seismic import compute_seismic_magnitude, generate_seismogram
 from core.erosion import (
@@ -404,29 +404,20 @@ class ToroSimulation:
         print("FASE 2: COLAPSO DO PISTÃO HIDRÁULICO")
         print("=" * 60)
         
-        # Calcular massa dos hidrometeoros da simulação
-        piston_data = compute_piston_mass(
-            self.spectra, self.bin_grid, self.w, self.z,
-            self.dz, self.config
+        # v6: massa do pistão a partir da pressão no centro do vórtice
+        # (condensado do funil, ~10 ton) — não a coluna de hidrometeoros
+        piston_data = compute_piston_mass_vortex(
+            self.tornado, self.z, self.dz,
+            self.profile.T, self.profile.p, self.profile.q_v,
+            self.config
         )
         self.M_piston = piston_data['M_piston']
-        rho_mix = piston_data.get('rho_mix', 0.0)
+        rho_mix = piston_data.get('rho_mix', 500.0)
         H_piston = piston_data.get('H_piston', 500.0)
-        
-        # Calibração: se a simulação não produziu massa suficiente,
-        # usar valores representativos do fenômeno Toró
-        if self.M_piston < 1e5:
-            print(f"  M_piston simulada = {self.M_piston:.0f} kg (insuficiente)")
-            print(f"  Usando valores calibrados para o Toró...")
-            self.M_piston = 3e6   # 3000 ton (estimativa observacional)
-            rho_mix = 500.0       # kg/m³ (mistura 60% gelo + 40% água)
-            H_piston = 1500.0     # m (coluna de ~1.5 km)
-        
-        if rho_mix < 10.0:
-            rho_mix = 500.0  # Fallback para mistura gelo-água
-        
+
         A_cross = np.pi * self.config.collapse.R_piston ** 2
-        
+
+        print(f"  Δp_centro (máx) = {piston_data['dp_center_max']:.0f} Pa")
         print(f"  M_piston = {self.M_piston:.0f} kg ({self.M_piston/1000:.1f} ton)")
         print(f"  ρ_mix = {rho_mix:.1f} kg/m³")
         print(f"  H_piston = {H_piston:.1f} m")
@@ -468,6 +459,8 @@ class ToroSimulation:
         self.results['phase2'] = {
             'M_piston_kg': float(self.M_piston),
             'M_piston_ton': float(self.M_piston / 1000),
+            'dp_center_max_Pa': float(piston_data['dp_center_max']),
+            'M_max_suspension_kg': float(piston_data['M_max_suspension']),
             'rho_mix': float(rho_mix),
             'H_piston': float(H_piston),
             'A_cross': float(A_cross),
@@ -623,6 +616,6 @@ class ToroSimulation:
         output_path = os.path.join(output_dir, 'results.json')
         
         with open(output_path, 'w', encoding='utf-8') as f:
-            json.dump(self.results, f, indent=2, ensure_ascii=False)
+                      json.dump(self.results, f, indent=2, ensure_ascii=False)
         
         print(f"\n  Resultados salvos em: {output_path}")

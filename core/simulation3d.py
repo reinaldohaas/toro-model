@@ -279,7 +279,7 @@ class ToroSimulation3D:
         # Vórtice de Rankine Vertical (Stage 2 - EOCE)
         # Substituindo a convergência puramente radial por rotação tangencial
         z_vortex_top = 4000.0  # m
-        V_max = 70.0  # m/s — velocidade tangencial máxima
+        V_max = float(self.config.dynamics.V_max_tornado)  # m/s — F2 (config)
         R_max = 1000.0  # m — raio de máxima velocidade (núcleo)
         
         dx_c = self.grid.X - xc
@@ -725,44 +725,37 @@ class ToroSimulation3D:
         # Extrair coluna central (ic, jc)
         ic = self.nx // 2
         jc = self.ny // 2
-        
-        # Massa total de hidrometeoros na coluna central (por m²)
+
+        # Diagnóstico: massa de hidrometeoros na coluna central (legado)
         total_wc = (self.qc + self.qr + self.qi + self.qs + self.qg)
         total_wc_col = total_wc[ic, jc, :]  # (nz,)
         rho_bar = self.grid.rho_bar_z
-        
-        # LWC + IWC em kg/m³
         wc_kgm3 = total_wc_col * rho_bar
-        
-        # Massa do pistão: integrar no volume (A_piston × dz)
+
         R_piston = self.config.collapse.R_piston
         A_piston = np.pi * R_piston**2
-        M_piston = float(np.sum(wc_kgm3 * A_piston * self.dz))
-        
-        # Encontrar a região com hidrometeoros significativos
-        mask = wc_kgm3 > 1e-4
-        if np.any(mask):
-            z_levels = self.grid.z[mask]
-            H_piston = float(z_levels[-1] - z_levels[0])
-            rho_mix = M_piston / (A_piston * max(H_piston, 1.0))
-        else:
-            H_piston = 500.0
-            rho_mix = 0.0
-        
-        # Calibração se a massa é insuficiente
-        if M_piston < 1e5:
-            print(f"  M_piston simulada = {M_piston:.0f} kg (insuficiente)")
-            print(f"  Usando valores calibrados para o Toró...")
-            M_piston = 3e6
-            rho_mix = 500.0
-            H_piston = 1500.0
-        
-        if rho_mix < 10.0:
-            rho_mix = 500.0
-        
+        M_hydro_col = float(np.sum(wc_kgm3 * A_piston * self.dz))
+
+        # v6: massa do pistão a partir da pressão no centro do vórtice
+        # (condensado do funil, ~10 ton) — não a coluna de hidrometeoros
+        from core.dynamics import TornadoVortex
+        from core.collapse import compute_piston_mass_vortex
+
+        vortex = TornadoVortex(self.config.dynamics)
+        piston_data = compute_piston_mass_vortex(
+            vortex, self.grid.z, self.dz,
+            self.grid.T_bar_z, self.grid.p_bar_z, self.grid.qv_bar_z,
+            self.config
+        )
+        M_piston = piston_data['M_piston']
+        H_piston = piston_data['H_piston']
+        rho_mix = piston_data['rho_mix']
+
         self.M_piston = M_piston
         A_cross = A_piston
-        
+
+        print(f"  Δp_centro (máx) = {piston_data['dp_center_max']:.0f} Pa")
+        print(f"  M_hydro_coluna = {M_hydro_col:.0f} kg ({M_hydro_col/1000:.1f} ton) [diagnóstico]")
         print(f"  M_piston = {M_piston:.0f} kg ({M_piston/1000:.1f} ton)")
         print(f"  ρ_mix = {rho_mix:.1f} kg/m³")
         print(f"  H_piston = {H_piston:.1f} m")
@@ -801,6 +794,9 @@ class ToroSimulation3D:
         self.results['phase2'] = {
             'M_piston_kg': float(M_piston),
             'M_piston_ton': float(M_piston / 1000),
+            'M_hydro_col_kg': float(M_hydro_col),
+            'dp_center_max_Pa': float(piston_data['dp_center_max']),
+            'M_max_suspension_kg': float(piston_data['M_max_suspension']),
             'rho_mix': float(rho_mix),
             'H_piston': float(H_piston),
             'A_cross': float(A_cross),
@@ -1210,4 +1206,3 @@ class ToroSimulation3D:
         
         ds.close()
         print(f"  NetCDF CF-1.6 salvo: {filepath}")
-

@@ -311,8 +311,8 @@ def check_collapse_criterion(spectra, B, w, z, dz, config):
     from core.microphysics import compute_lwc, compute_iwc, BinGrid
     
     nz = len(z)
-    R_piston = config.collapse.R_piston  # 200 m
-    A_piston = np.pi * R_piston ** 2     # ~125000 m²
+    R_piston = config.collapse.R_piston  # 15 m
+    A_piston = np.pi * R_piston ** 2     # ~707 m²
     
     # Usar raio da corrente ascendente para o balanço de forças
     R_updraft = config.dynamics.R_updraft  # 1500 m
@@ -355,16 +355,16 @@ def check_collapse_criterion(spectra, B, w, z, dz, config):
     # Peso total do pistão
     W_total = M_piston * g
     
-    # Critério de colapso:
+    # Critério de colapso (v6 — pistão ~10 ton):
     # 1. Peso > sustentação
-    # 2. Massa significativa (>500 ton para evitar falso positivo)
-    # 3. Precisa ter hidrometeoros em pelo menos 10 níveis
-    collapsed = (W_total > F_updraft) and (M_piston > 5e5) and (n_levels_with_hydro > 10)
+    # 2. Massa significativa (>5 ton para evitar falso positivo)
+    # 3. Precisa ter hidrometeoros em pelo menos 3 níveis
+    collapsed = (W_total > F_updraft) and (M_piston > 5e3) and (n_levels_with_hydro > 3)
     
     return {
         'collapsed': collapsed,
         'M_piston': float(M_piston),
         'F_updraft': float(F_updraft),
         'W_total': float(W_total),
-        'n_levels': n_levels_with_hydro
+        'n_levels': n_levels_with_hydro,
     }

@@ -124,7 +124,7 @@ class DynamicsConfig:
     epsilon_0: float = 0.1        # taxa de entrainamento base (/R_updraft)
     
     # Tornado (vórtice de Rankine)
-    V_max_tornado: float = 70.0   # m/s — velocidade tangencial máxima (EF2-EF3)
+    V_max_tornado: float = 60.0   # m/s — velocidade tangencial máxima (F2, 50–70 m/s)
     R_max_tornado: float = 150.0  # m — raio de vento máximo
     z_max_tornado: float = 1000.0 # m — altura do vento máximo
     H_decay_tornado: float = 3000.0  # m — escala de decaimento vertical
@@ -149,11 +149,19 @@ class SpongeConfig:
 
 @dataclass
 class CollapseConfig:
-    """Configuração do colapso do pistão hidráulico."""
-    R_piston: float = 15.0        # m — raio do pistão (30m de diâmetro medido no Mirador)
+    """Configuração do colapso do pistão hidráulico.
+
+    Compatível com v6: o pistão é o condensado do núcleo do vórtice
+    (funil), derivado da pressão no centro (Rankine) — ~10 ton,
+    e NÃO a coluna inteira de hidrometeoros (~10³ ton).
+    """
+    R_piston: float = 20.0        # m — raio do pistão (40m de diâmetro)
     C_d_piston: float = 1.0       # coeficiente de arrasto do pistão
     c_sound_mix: float = 500.0    # m/s — velocidade do som na mistura água-gelo
     f_ice_cohesion: float = 0.6   # fração de gelo para coesão estrutural
+    V_funnel_min: float = 5.0     # m/s — V_max mínimo que define a extensão do funil
+    q_c_core: float = 1.2e-3      # kg/kg — água de nuvem ingerida no núcleo (z_LCL–z_freezing)
+    M_piston_ref: float = 10e3    # kg — referência v6 (~10 ton) para verificação
 
 
 @dataclass
@@ -167,8 +175,9 @@ class AcousticsConfig:
 
 @dataclass
 class SeismicConfig:
-    """Configuração sísmica — calibrada para M 2-3 Richter."""
-    eta_seismic: float = 0.05     # eficiência de conversão cinética → sísmica
+    """Configuração sísmica — calibrada para M_L 2,1 (tremor de
+    Juiz de Fora/MG, 21-22/02/2026, rede sismográfica)."""
+    eta_seismic: float = 0.088    # eficiência de conversão cinética → sísmica (calibrada p/ M_L=2,1)
     M_L_min: float = 2.0          # magnitude mínima observada
     M_L_max: float = 3.0          # magnitude máxima observada
     f_dominant: float = 3.0       # Hz — frequência sísmica dominante

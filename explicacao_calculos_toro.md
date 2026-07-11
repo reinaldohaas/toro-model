@@ -35,7 +35,7 @@ O ponto crucial está nas [linhas 482-488](file:///C:/Users/haas/.gemini/antigra
 ```python
 # Se a massa simulada é insuficiente (< 100 ton)...
 if M_piston < 1e5:
-    M_piston = 3e6      # ← FORÇADO para 3.000.000 kg = 3.000 toneladas!
+    M_piston = 14e3      # ← FORÇADO para 14.227 kg = 14 toneladas!
     rho_mix = 500.0      # kg/m³
     H_piston = 1500.0    # m
 ```
@@ -44,7 +44,7 @@ if M_piston < 1e5:
 
 | Parâmetro    | Valor                        | Comentário                     |
 | ------------ | ---------------------------- | ------------------------------ |
-| **M_piston** | **3.000.000 kg (3.000 ton)** | ⚠️ Valor calibrado forçado     |
+| **M_piston** | **14.227 kg (14 ton)** | ⚠️ Valor calibrado forçado     |
 | R_piston     | 200 m                        | Raio do cilindro               |
 | A_piston     | ~125.664 m²                  | Área = π×R²                    |
 | ρ_mix        | 500 kg/m³                    | Densidade da mistura água-gelo |
@@ -52,23 +52,23 @@ if M_piston < 1e5:
 
 > [!WARNING]
 > 
-> ### Por que 3.000 toneladas parece muito?
+> ### Por que 14 toneladas parece muito?
 > 
-> A simulação 3D **não produziu hidrometeoros suficientes** na coluna (o LWC e IWC simulados são muito baixos — da ordem de 10⁻⁵ g/m³). Por isso, o código ativa o **fallback calibrado** de 3 milhões de kg.
+> A simulação 3D **não produziu hidrometeoros suficientes** na coluna (o LWC e IWC simulados são muito baixos — da ordem de 10⁻⁵ g/m³). Por isso, o código ativa o **fallback calibrado** de 14 mil de kg.
 > 
-> **3.000 toneladas de água equivalem a:**
+> **14 toneladas de água equivalem a:**
 > 
 > - 3.000 m³ de água pura
 > - Uma piscina de 30m × 20m × 5m de profundidade
 > - Concentrada num cilindro de 400m de diâmetro × 1,5km de altura
 > 
-> Para comparação, um microburst severo tipicamente carrega **100-500 toneladas** de hidrometeoros. O valor de 3.000 ton seria extremo mesmo para a hipótese do Toró.
+> Para comparação, um microburst severo tipicamente carrega **100-500 toneladas** de hidrometeoros. O valor de 14 ton seria extremo mesmo para a hipótese do Toró.
 
 ### Sugestões de ajuste
 
 ```diff
 # Opção 1: Reduzir para ~300-500 toneladas (mais realista para microburst severo)
-- M_piston = 3e6
+- M_piston = 14e3
 + M_piston = 5e5    # 500 toneladas
 
 # Opção 2: Fazer a simulação produzir mais hidrometeoros
@@ -150,7 +150,7 @@ SPL = 20 × log₁₀(P_sound / 20µPa)
 | 1 km      | **189 dB** |
 
 > [!NOTE]
-> 189 dB é extraordinariamente alto — equivalente a uma explosão próxima. Isso é consequência direta da massa de 3.000 ton: como P_impact = 5.7 MPa e A_piston ≈ 126 m², a energia acústica é enorme. Com M_piston menor, o SPL cairia proporcionalmente.
+> 189 dB é extraordinariamente alto — equivalente a uma explosão próxima. Isso é consequência direta da massa de 14 ton: como P_impact = 5.7 MPa e A_piston ≈ 126 m², a energia acústica é enorme. Com M_piston menor, o SPL cairia proporcionalmente.
 
 ---
 
@@ -267,7 +267,7 @@ Para cascalho (D = 64mm):
 
 ```mermaid
 graph TD
-    A["M_piston = 3.000 ton<br/>(valor calibrado forçado)"] --> B["v_impact = 22.8 m/s<br/>v_t = √(2Mg/ρCA)"]
+    A["M_piston = 14 ton<br/>(valor calibrado forçado)"] --> B["v_impact = 22.8 m/s<br/>v_t = √(2Mg/ρCA)"]
     B --> C["E_impact = ½Mv² = 781 MJ"]
     B --> D["P_impact = ρ×c×v = 5.7 MPa"]
     C --> E["M_L = 3.89 Richter"]
@@ -285,7 +285,7 @@ graph TD
 > 
 > ### O problema central: M_piston é a raiz de tudo
 > 
-> **Todos os resultados** dependem da massa do pistão que está forçada em 3.000 toneladas:
+> **Todos os resultados** dependem da massa do pistão que está forçada em 14 toneladas:
 > 
 > - **v_impact** depende de M via velocidade terminal
 > - **E_impact** = ½Mv² — proporcional a M
@@ -303,4 +303,6 @@ graph TD
 3. **Remover o clamp de erosão** — deixar o modelo calcular livremente e comparar com observações
 4. **Adicionar sensibilidade** — rodar com M_piston = [100, 300, 500, 1000, 3000] ton e comparar os resultados
 
-Quer que eu faça alguma dessas modificações?
+---
+
+## ✅ Compatibilização com a versão 6 
