@@ -28,8 +28,11 @@ FPS = 24                # frames por segundo
 RESOLUTION = (1920, 1080)
 
 # Física
-R_PISTON = 1500.0       # m — raio do pistão
-V_FALL = 20.0           # m/s — velocidade terminal
+# v6: pistão físico R=20 m (~10 ton). Para visualização na grade de
+# 200 m usa-se raio exagerado (~20×), senão o funil fica sub-pixel.
+R_PISTON_FIS = 20.0     # m — raio físico do pistão (v6)
+R_PISTON = 400.0        # m — raio VISUAL (exagero p/ renderização)
+V_FALL = 13.3           # m/s — velocidade terminal (v6, M=10 ton)
 C_SOUND = 340.0         # m/s — velocidade do som
 Z_CLOUD_BASE = 4000.0   # m — base da nuvem
 Z_CLOUD_TOP = 12000.0   # m — topo
@@ -473,7 +476,7 @@ def render_animation(snapshots, grid_info,
         )
         
         pl.add_text(
-            f"v_fall = {V_FALL:.0f} m/s  |  c = {C_SOUND:.0f} m/s",
+            f"v_fall = {V_FALL:.1f} m/s (v6, M=10 ton, R={R_PISTON_FIS:.0f}m)  |  c = {C_SOUND:.0f} m/s",
             position='lower_left', font_size=8, color='lightgray'
         )
         
