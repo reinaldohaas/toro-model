@@ -1,10 +1,16 @@
 """
-animate_collapse_3d.py — Animação 3D cinematográfica do colapso do pistão hidráulico.
+animate_collapse_3d.py — Animação 3D cinematográfica do Toró (v6).
 
-Câmera em 3 fases:
-    1. CLOSE-UP no pistão descendo (acompanhando a queda)
-    2. IMPACTO no solo (câmera baixa, dramatic)
-    3. PAN para cima mostrando propagação das ondas acústicas
+Narrativa física em 7 fases, com ritmo CONSTANTE (frames alocados por
+fase — sem compressão/aceleração no final):
+
+    F0  Nuvem convectiva com topo IRIDESCENTE (glaciação explosiva)
+    F1  INFLUXO DE INC (núcleos de gelo) espiralando para a zona H-M
+    F2  VÓRTICE (tornado): updraft helicoidal + formação intensa de GRAUPEL
+    F3  SEDIMENTAÇÃO: graupel migra para o núcleo do vórtice
+    F4  QUEDA DO JATO de água+gelo DENTRO do centro do tornado (pistão v6)
+    F5  IMPACTO: flash, splash e ondas acústicas
+    F6  ONDAS + REVELAÇÃO DA RAVINA e das cicatrizes no solo
 
 Usa PyVista para renderizar isosuperfícies 3D.
 Saída: viz/toro_collapse_3d.mp4
@@ -23,508 +29,467 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 # ================================================================
 # PARÂMETROS
 # ================================================================
-N_FRAMES = 150          # frames totais
+N_FRAMES = 420          # frames totais (~17.5 s @ 24 fps)
 FPS = 24                # frames por segundo
 RESOLUTION = (1920, 1080)
 
-# Física
-# v6: pistão físico R=20 m (~10 ton). Para visualização na grade de
-# 200 m usa-se raio exagerado (~20×), senão o funil fica sub-pixel.
-R_PISTON_FIS = 20.0     # m — raio físico do pistão (v6)
-R_PISTON = 400.0        # m — raio VISUAL (exagero p/ renderização)
-V_FALL = 13.3           # m/s — velocidade terminal (v6, M=10 ton)
+# Física (v6)
+R_PISTON_FIS = 20.0     # m — raio físico do pistão/jato (v6, ~10 ton)
+R_JET = 300.0           # m — raio VISUAL do jato (exagero p/ grade de 200 m)
+R_VORTEX = 1000.0       # m — raio visual do vórtice/funil
+V_FALL = 13.3           # m/s — velocidade terminal do pistão (v6)
 C_SOUND = 340.0         # m/s — velocidade do som
-Z_CLOUD_BASE = 4000.0   # m — base da nuvem
+Z_CLOUD_BASE = 4000.0   # m — base da nuvem (nível de congelamento)
 Z_CLOUD_TOP = 12000.0   # m — topo
+Z_LCL = 1000.0          # m — base do funil condensado
+Z_HM_BOT, Z_HM_TOP = 4250.0, 4750.0   # zona Hallett-Mossop (influxo de INC)
 
-# Tempo da animação (comprimido para drama)
-# Fase 1: últimos 15s antes do impacto (pistão cai 300m finais)
-# Fase 2: impacto (1s)
-# Fase 3: ondas acústicas expandindo (6s → ~2km de raio)
-T_PRE_IMPACT = 15.0     # s antes do impacto
-T_POST_IMPACT = 6.0     # s após impacto
-T_TOTAL = T_PRE_IMPACT + T_POST_IMPACT
+# Ravina (pós-impacto) — escala real ~40 m de largura; visual exagerada
+RAVINE_LEN = 3000.0     # m — comprimento visual do canal
+RAVINE_WID = 250.0      # m — largura visual
+RAVINE_DEPTH = 250.0    # m — profundidade visual
+
+# ---------------------------------------------------------------
+# FASES: (nome, fração dos frames, duração física representada [s])
+# Ritmo constante: cada fase recebe um bloco fixo de frames.
+# ---------------------------------------------------------------
+PHASES = [
+    ('GLACIACAO',    0.10),   # F0 topo iridescente
+    ('INFLUXO_INC',  0.12),   # F1 núcleos de gelo entrando
+    ('VORTICE',      0.18),   # F2 hélices + graupel
+    ('SEDIMENTACAO', 0.12),   # F3 graupel converge ao núcleo
+    ('QUEDA_JATO',   0.20),   # F4 pistão desce no olho do tornado
+    ('IMPACTO',      0.08),   # F5 flash + splash
+    ('RAVINA',       0.20),   # F6 ondas + cicatrizes
+]
+PHASE_EDGES = np.cumsum([0.0] + [f for _, f in PHASES])
 
 
-def smooth_step(t, t0, t1):
-    """Interpolação suave entre 0 e 1 no intervalo [t0, t1]."""
+def phase_of(frac):
+    """Retorna (índice, nome, progresso local 0-1) da fase para frac global."""
+    for i, (name, _) in enumerate(PHASES):
+        if frac < PHASE_EDGES[i+1] or i == len(PHASES) - 1:
+            p0, p1 = PHASE_EDGES[i], PHASE_EDGES[i+1]
+            local = np.clip((frac - p0) / max(p1 - p0, 1e-9), 0.0, 1.0)
+            return i, name, local
+    return len(PHASES)-1, PHASES[-1][0], 1.0
+
+
+def smooth_step(t, t0=0.0, t1=1.0):
     s = np.clip((t - t0) / (t1 - t0), 0, 1)
-    return s * s * (3 - 2 * s)  # Hermite
+    return s * s * (3 - 2 * s)
 
 
 def lerp(a, b, t):
-    """Interpolação linear entre a e b."""
     return a + (b - a) * np.clip(t, 0, 1)
 
 
-def simulate_collapse(n_frames=N_FRAMES):
-    """Simula o colapso com alta resolução temporal."""
-    print("=" * 60)
-    print("  SIMULAÇÃO DE COLAPSO — Alta resolução")
-    print("=" * 60)
-    
-    # Grade 3D
+# ================================================================
+# CAMPOS SINTÉTICOS POR FASE
+# ================================================================
+
+def make_grid():
     nx, ny, nz = 50, 50, 80
-    dx = dy = 200.0   # m
-    dz = 200.0         # m
-    
+    dx = dy = dz = 200.0
     x = np.linspace(0, (nx-1)*dx, nx)
     y = np.linspace(0, (ny-1)*dy, ny)
     z = np.linspace(0, (nz-1)*dz, nz)
-    
     X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
-    xc, yc = x.mean(), y.mean()
-    
-    dt_frame = T_TOTAL / n_frames
-    
-    print(f"  Grade: {nx}×{ny}×{nz} (Δ={dx:.0f}m)")
-    print(f"  Frames: {n_frames} @ {FPS}fps = {n_frames/FPS:.1f}s")
-    print(f"  Período: t=-{T_PRE_IMPACT:.0f}s a t=+{T_POST_IMPACT:.0f}s")
-    
-    snapshots = {
-        'time': [],
-        'qg': [],
-        'p_prime': [],
-        'wave_shell': [],
-        'z_piston_base': [],
-    }
-    
-    R_xy = np.sqrt((X - xc)**2 + (Y - yc)**2)
-    
-    for frame in range(n_frames):
-        t = -T_PRE_IMPACT + frame * dt_frame
-        
-        # ============================================
-        # PISTÃO DE HIDROMETEOROS
-        # ============================================
-        # Posição da base do pistão (descendo)
-        if t <= 0:
-            z_base = max(0.0, Z_CLOUD_BASE - V_FALL * abs(t))
-            # Acelera nos últimos metros (queda livre + arrasto)
-            if z_base < 500:
-                accel_factor = 1.0 + 0.5 * (500 - z_base) / 500
-                z_base = max(0.0, z_base / accel_factor)
-        else:
-            z_base = 0.0  # no chão
-        
-        z_top = max(z_base + 500, Z_CLOUD_TOP - V_FALL * max(0, abs(t)) * 0.15)
-        
-        # Perfil radial (Gaussiana)
-        radial = np.exp(-(R_xy / R_PISTON)**2)
-        
-        # Perfil vertical
-        if t <= 0:
-            # Coluna descendo
-            in_column = ((Z >= z_base) & (Z <= z_top)).astype(float)
-            # Suavizar borda inferior
-            below = np.exp(-((Z - z_base) / 300.0)**2) * (Z < z_base).astype(float)
-            vertical = in_column + below
-            
-            # Concentrar massa na base (acumulação gravitacional)
-            z_rel = np.clip((Z - z_base) / max(z_top - z_base, 1.0), 0, 1)
-            mass_profile = np.exp(-1.5 * z_rel)
-        else:
-            # Após impacto: splash radial
-            spread_factor = 1.0 + 3.0 * t  # expande lateralmente
-            vertical = np.exp(-(Z / (400.0 + 200*t))**2)
-            radial = np.exp(-(R_xy / (R_PISTON * spread_factor))**2)
-            mass_profile = 1.0
-            
-            # Coluna residual (deforma, encolhe)
-            residual = np.exp(-(R_xy / R_PISTON)**2) * \
-                       ((Z > 500) & (Z < z_top * (1 - 0.3*t))).astype(float) * \
-                       np.exp(-0.5 * t)
-            vertical = np.maximum(vertical, residual)
-        
-        qg = 8.0 * radial * vertical * mass_profile
-        
-        # ============================================
-        # PERTURBAÇÃO DE PRESSÃO
-        # ============================================
-        p_prime = np.zeros_like(X)
-        
-        if t < 0:
-            # Compressão à frente do pistão (abaixo)
-            z_front = max(0, z_base - 200)
-            r_front = np.sqrt(R_xy**2 + (Z - z_front)**2)
-            p_prime += 800.0 * np.exp(-(r_front / 1200.0)**2)
-            
-            # Sucção atrás (acima)
-            z_wake = z_base + 1000
-            r_wake = np.sqrt(R_xy**2 + (Z - z_wake)**2)
-            p_prime -= 400.0 * np.exp(-(r_wake / 1500.0)**2)
-            
-            # Intensifica perto do solo
-            if z_base < 1000:
-                ground_factor = 1.0 + 2.0 * (1000 - z_base) / 1000
-                p_prime *= ground_factor
-        
-        # ============================================
-        # ONDA ACÚSTICA (pós-impacto)
-        # ============================================
-        wave_shell = np.zeros_like(X)
-        
-        if t > 0:
-            r_from_impact = np.sqrt(R_xy**2 + Z**2)
-            
-            # Frente de onda principal
-            wave_r = C_SOUND * t
-            wave_width = 200.0 + 50.0 * t  # alarga com o tempo
-            
-            # Shell esférica
-            shell = np.exp(-((r_from_impact - wave_r) / wave_width)**2)
-            
-            # Amplitude: 1/r (conservação de energia)
-            amplitude = np.where(
-                r_from_impact > 50,
-                3000.0 / r_from_impact,
-                3000.0 / 50
-            )
-            
-            wave_shell = amplitude * shell
-            
-            # Adicionar oscilações (ondas de pressão)
-            wavelength = 400.0
-            p_wave = amplitude * shell * np.cos(2*np.pi * r_from_impact / wavelength)
-            p_prime += p_wave
-            
-            # Segunda frente (reflexão no solo, mais fraca)
-            if t > 0.3:
-                wave_r2 = C_SOUND * (t - 0.3)
-                # Origem refletida (imagem abaixo do solo)
-                r_reflected = np.sqrt(R_xy**2 + (Z + 200)**2)
-                shell2 = np.exp(-((r_reflected - wave_r2) / (wave_width * 1.5))**2)
-                amp2 = np.where(r_reflected > 50, 1500.0/r_reflected, 1500.0/50)
-                wave_shell += 0.3 * amp2 * shell2
-            
-            # Terceira frente (eco topográfico, ainda mais fraca)
-            if t > 1.0:
-                wave_r3 = C_SOUND * (t - 1.0)
-                shell3 = np.exp(-((r_from_impact - wave_r3) / (wave_width * 2))**2)
-                amp3 = np.where(r_from_impact > 50, 800.0/r_from_impact, 800.0/50)
-                wave_shell += 0.15 * amp3 * shell3
-        
-        snapshots['time'].append(t)
-        snapshots['qg'].append(qg.astype(np.float32))
-        snapshots['p_prime'].append(p_prime.astype(np.float32))
-        snapshots['wave_shell'].append(wave_shell.astype(np.float32))
-        snapshots['z_piston_base'].append(z_base)
-        
-        if frame % 15 == 0:
-            print(f"  Frame {frame:3d}/{n_frames} | t={t:+6.2f}s | "
-                  f"z_base={z_base:6.0f}m | qg_max={qg.max():.1f}")
-    
-    grid_info = {'x': x, 'y': y, 'z': z, 'nx': nx, 'ny': ny, 'nz': nz,
-                 'dx': dx, 'xc': xc, 'yc': yc}
-    
-    print(f"\n  ✓ {n_frames} frames simulados")
-    return snapshots, grid_info
+    return dict(x=x, y=y, z=z, X=X, Y=Y, Z=Z,
+                xc=x.mean(), yc=y.mean(), nx=nx, ny=ny, nz=nz, dx=dx)
 
 
-def get_camera(t, frame_frac, xc, yc, z_piston):
-    """Retorna (position, focal_point, up) da câmera para o tempo t.
-    
-    3 fases cinematográficas:
-        1. Close-up: acompanha o pistão descendo (câmera lateral, mesma altura)
-        2. Impacto: câmera baixa, próxima ao solo, olhando o impacto
-        3. Pan up: câmera sobe suavemente, mostra ondas expandindo
+def cloud_field(g, grow):
+    """Nuvem cumulonimbus (torre + bigorna). grow: 0-1."""
+    R = np.sqrt((g['X']-g['xc'])**2 + (g['Y']-g['yc'])**2)
+    Z = g['Z']
+    top = Z_CLOUD_BASE + (Z_CLOUD_TOP - Z_CLOUD_BASE) * (0.75 + 0.25*grow)
+    # torre
+    r_tower = 2500.0
+    tower = np.exp(-(R/r_tower)**2) * ((Z > Z_LCL) & (Z < top))
+    # bigorna
+    anvil_z = top - 1500
+    anvil = np.exp(-(R/5000.0)**2) * np.exp(-((Z-top+700)/900.0)**2) * (Z > anvil_z)
+    return 5.0*(tower + 0.9*anvil)
+
+
+def funnel_field(g, strength):
+    """Funil condensado do vórtice (cone do LCL ao solo). strength 0-1."""
+    if strength <= 0:
+        return 0.0 * g['X']
+    R = np.sqrt((g['X']-g['xc'])**2 + (g['Y']-g['yc'])**2)
+    Z = g['Z']
+    z_tip = Z_LCL * (1.0 - strength)          # ponta desce até o solo
+    r_local = R_VORTEX * (0.25 + 0.75*np.clip((Z - z_tip)/(Z_CLOUD_BASE - z_tip + 1), 0, 1))
+    f = np.exp(-(R/np.maximum(r_local, 50.0))**2) * ((Z > z_tip) & (Z < Z_CLOUD_BASE))
+    return 6.0 * strength * f
+
+
+def graupel_field(g, ring, core, z_load):
+    """Graupel: anel no vórtice (ring 0-1) + núcleo carregado (core 0-1).
+
+    z_load: altura do centro de massa da carga.
     """
-    # Transições suaves
-    phase1_end = T_PRE_IMPACT / T_TOTAL          # ~0.71
-    phase2_end = (T_PRE_IMPACT + 1.5) / T_TOTAL  # ~0.78
-    
-    # Rotação base (gira 120° durante toda a animação)
-    angle = 30 + 120 * frame_frac
-    
-    if frame_frac < phase1_end:
-        # ---- FASE 1: Close-up no pistão descendo ----
-        progress = frame_frac / phase1_end
-        
-        # Câmera acompanha a altura do pistão
-        cam_z = max(500, z_piston + 500)  # um pouco acima
-        cam_dist = 4000 + 1000 * (1 - progress)  # aproxima gradualmente
-        
-        # Olha para o pistão
-        focal_z = max(200, z_piston)
-        
-        cam_x = xc + cam_dist * np.cos(np.radians(angle))
-        cam_y = yc + cam_dist * np.sin(np.radians(angle))
-        
-        return (cam_x, cam_y, cam_z), (xc, yc, focal_z), (0, 0, 1)
-    
-    elif frame_frac < phase2_end:
-        # ---- FASE 2: Impacto (câmera baixa, dramática) ----
-        progress = (frame_frac - phase1_end) / (phase2_end - phase1_end)
-        
-        cam_dist = lerp(4000, 3500, progress)
-        cam_z = lerp(500, 300, progress)  # câmera desce ao nível do solo
-        focal_z = lerp(200, 0, progress)
-        
-        cam_x = xc + cam_dist * np.cos(np.radians(angle))
-        cam_y = yc + cam_dist * np.sin(np.radians(angle))
-        
-        return (cam_x, cam_y, cam_z), (xc, yc, focal_z), (0, 0, 1)
-    
-    else:
-        # ---- FASE 3: Pan para cima (mostra ondas acústicas) ----
-        progress = (frame_frac - phase2_end) / (1.0 - phase2_end)
-        progress_smooth = smooth_step(progress, 0, 1)
-        
-        cam_dist = lerp(3500, 7000, progress_smooth)
-        cam_z = lerp(300, 8000, progress_smooth)  # sobe suavemente
-        focal_z = lerp(0, 3000, progress_smooth)   # focal sobe também
-        
-        cam_x = xc + cam_dist * np.cos(np.radians(angle))
-        cam_y = yc + cam_dist * np.sin(np.radians(angle))
-        
-        return (cam_x, cam_y, cam_z), (xc, yc, focal_z), (0, 0, 1)
+    R = np.sqrt((g['X']-g['xc'])**2 + (g['Y']-g['yc'])**2)
+    Z = g['Z']
+    qg = np.zeros_like(R)
+    if ring > 0:
+        # anel helicoidal na zona H-M / acima (graupel crescendo no updraft)
+        ring_r = R_VORTEX * 1.1
+        rad = np.exp(-((R - ring_r)/500.0)**2)
+        vert = np.exp(-((Z - 5200.0)/1500.0)**2)
+        qg += 7.0 * ring * rad * vert
+    if core > 0:
+        # carga concentrada no núcleo (pré-colapso)
+        rad = np.exp(-(R/(R_JET*1.6))**2)
+        vert = np.exp(-((Z - z_load)/1200.0)**2)
+        qg += 8.0 * core * rad * vert
+    return qg
 
 
-def render_animation(snapshots, grid_info,
-                     output_path='viz/toro_collapse_3d.mp4'):
-    """Renderiza animação 3D cinematográfica."""
+def jet_field(g, z_base, alive):
+    """Jato de água+gelo caindo dentro do núcleo (pistão v6)."""
+    if not alive:
+        return 0.0 * g['X']
+    R = np.sqrt((g['X']-g['xc'])**2 + (g['Y']-g['yc'])**2)
+    Z = g['Z']
+    z_top = min(Z_CLOUD_BASE + 800.0, z_base + 2500.0)
+    rad = np.exp(-(R/R_JET)**2)
+    col = ((Z >= z_base) & (Z <= z_top)).astype(float)
+    tip = np.exp(-((Z - z_base)/250.0)**2) * (Z < z_base)
+    zrel = np.clip((Z - z_base)/max(z_top - z_base, 1.0), 0, 1)
+    return 9.0 * rad * (col*np.exp(-1.2*zrel) + tip)
+
+
+def inc_particles(g, local, n=700, seed=7):
+    """Pontos de INC espiralando para dentro da zona H-M. local 0-1."""
+    rng = np.random.default_rng(seed)
+    th0 = rng.uniform(0, 2*np.pi, n)
+    r0 = rng.uniform(2500, 5200, n)
+    z0 = rng.uniform(Z_HM_BOT - 800, Z_HM_TOP + 800, n)
+    # espiral: raio encolhe, ângulo gira, z converge à zona H-M
+    s = np.clip(local*1.15, 0, 1)
+    r = r0*(1-s) + (R_VORTEX*1.05)*s
+    th = th0 + 4.0*np.pi*s
+    zz = z0*(1-s) + np.clip(z0, Z_HM_BOT, Z_HM_TOP)*s
+    pts = np.column_stack([g['xc'] + r*np.cos(th),
+                           g['yc'] + r*np.sin(th), zz])
+    return pts
+
+
+def helix_lines(g, local, n_helix=6, npts=160):
+    """Linhas helicoidais do updraft no vórtice. Retorna lista de arrays."""
+    lines = []
+    z_top = Z_LCL + (7000.0 - Z_LCL)*np.clip(local*1.2, 0.05, 1.0)
+    zs = np.linspace(50.0, z_top, npts)
+    for k in range(n_helix):
+        th = 2*np.pi*k/n_helix + 5.5*np.pi*(zs - zs[0])/(zs[-1]-zs[0]) + 2.0*np.pi*local
+        rr = R_VORTEX*(0.45 + 0.55*(zs/z_top))
+        lines.append(np.column_stack([g['xc']+rr*np.cos(th),
+                                      g['yc']+rr*np.sin(th), zs]))
+    return lines
+
+
+def ravine_surface(g, reveal):
+    """Superfície do solo com a ravina + cicatrizes. reveal 0-1."""
+    n = 120
+    L = g['x'].max() - g['x'].min()
+    gx = np.linspace(g['x'].min(), g['x'].max(), n)
+    gy = np.linspace(g['y'].min(), g['y'].max(), n)
+    GX, GY = np.meshgrid(gx, gy, indexing='ij')
+    dxr, dyr = GX - g['xc'], GY - g['yc']
+    # canal alinhado a y (direção do desfiladeiro)
+    along = np.exp(-(dyr/(RAVINE_LEN*0.5))**2)
+    across = np.exp(-(dxr/(RAVINE_WID*0.5))**2)
+    depth = RAVINE_DEPTH * reveal * across * along
+    # cicatrizes radiais (sulcos de erosão/queda de árvores)
+    Rg = np.sqrt(dxr**2 + dyr**2)
+    thg = np.arctan2(dyr, dxr)
+    scars = 0.0*GX
+    for a in np.linspace(0, 2*np.pi, 9, endpoint=False):
+        scars += np.exp(-((np.mod(thg - a + np.pi, 2*np.pi) - np.pi)/0.06)**2)
+    scars *= 35.0*reveal*np.exp(-(Rg/1800.0)**2)*(Rg > RAVINE_WID*0.6)
+    GZ = -5.0 - depth - scars
+    return GX, GY, GZ, depth + scars
+
+
+# ================================================================
+# SIMULAÇÃO FRAME A FRAME
+# ================================================================
+
+def simulate_collapse(n_frames=N_FRAMES):
+    print("=" * 60)
+    print("  STORYBOARD v6 — campos por frame")
+    print("=" * 60)
+    g = make_grid()
+
+    snaps = {'frac': [], 'phase': [], 'local': [], 'label': [],
+             't_real': [], 'qc': [], 'qg': [], 'funnel': [],
+             'wave': [], 'z_jet': [], 'reveal': []}
+
+    for fi in range(n_frames):
+        frac = fi/max(n_frames-1, 1)
+        pi, name, local = phase_of(frac)
+
+        grow = 1.0 if pi > 0 else smooth_step(local)
+        irid = smooth_step(local) if pi == 0 else 1.0
+        funnel_s = 0.0
+        ring = core = 0.0
+        z_load = 5000.0
+        z_jet = None
+        wave = None
+        reveal = 0.0
+        t_real = 0.0
+
+        if name == 'GLACIACAO':
+            t_real = -900 + 300*local
+            label = 'GLACIAÇÃO EXPLOSIVA — topo iridescente'
+        elif name == 'INFLUXO_INC':
+            t_real = -600 + 200*local
+            funnel_s = 0.3*smooth_step(local)
+            ring = 0.3*local
+            label = 'INFLUXO DE INC — núcleos de gelo na zona H-M'
+        elif name == 'VORTICE':
+            t_real = -400 + 200*local
+            funnel_s = 0.3 + 0.5*smooth_step(local)
+            ring = 0.3 + 0.7*local
+            core = 0.3*local
+            label = 'VÓRTICE F2 — updraft helicoidal + graupel'
+        elif name == 'SEDIMENTACAO':
+            t_real = -200 + 150*local
+            funnel_s = 0.8 + 0.2*local
+            ring = 1.0 - 0.6*local
+            core = 0.3 + 0.7*local
+            z_load = 5000.0 - 1200.0*local
+            label = 'SEDIMENTAÇÃO — carga converge ao núcleo'
+        elif name == 'QUEDA_JATO':
+            # queda REAL: 4000/13.3 ≈ 300 s → time-lapse uniforme (sem aceleração)
+            t_real = -Z_CLOUD_BASE/V_FALL*(1.0 - local)
+            funnel_s = 1.0
+            core = 1.0 - 0.7*local
+            z_load = 3800.0*(1.0 - local) + 200.0
+            z_jet = Z_CLOUD_BASE*(1.0 - local)
+            label = 'QUEDA DO JATO — água+gelo no olho do tornado'
+        elif name == 'IMPACTO':
+            t_real = 1.5*local
+            funnel_s = 1.0 - 0.5*local
+            z_jet = 0.0
+            wave = t_real
+            reveal = 0.4*smooth_step(local)
+            label = '>>> IMPACTO <<<'
+        else:  # RAVINA
+            t_real = 1.5 + 8.0*local
+            funnel_s = max(0.0, 0.5 - local)
+            wave = t_real
+            reveal = 0.4 + 0.6*smooth_step(local)
+            label = 'RAVINA E CICATRIZES — ondas acústicas'
+
+        qc = cloud_field(g, grow)
+        qg = graupel_field(g, ring, core, z_load)
+        if z_jet is not None and name == 'QUEDA_JATO':
+            qg = np.maximum(qg, jet_field(g, z_jet, True))
+        fn = funnel_field(g, funnel_s)
+
+        wv = np.zeros_like(qc, dtype=np.float32)
+        if wave is not None and wave > 0:
+            R3 = np.sqrt((g['X']-g['xc'])**2 + (g['Y']-g['yc'])**2 + g['Z']**2)
+            wr = C_SOUND*wave
+            ww = 200.0 + 50.0*wave
+            amp = np.where(R3 > 50, 3000.0/R3, 60.0)
+            wv = (amp*np.exp(-((R3-wr)/ww)**2)).astype(np.float32)
+            if wave > 0.5:
+                wr2 = C_SOUND*(wave-0.5)
+                wv += (0.3*amp*np.exp(-((R3-wr2)/(1.5*ww))**2)).astype(np.float32)
+
+        snaps['frac'].append(frac)
+        snaps['phase'].append(name)
+        snaps['local'].append(local)
+        snaps['label'].append(label)
+        snaps['t_real'].append(t_real)
+        snaps['qc'].append(qc.astype(np.float32))
+        snaps['qg'].append(qg.astype(np.float32))
+        snaps['funnel'].append(fn.astype(np.float32))
+        snaps['wave'].append(wv)
+        snaps['z_jet'].append(-1.0 if z_jet is None else z_jet)
+        snaps['reveal'].append(reveal)
+
+        if fi % 30 == 0:
+            print(f"  {fi:4d}/{n_frames} {name:13s} local={local:.2f}")
+
+    print(f"\n  ✓ {n_frames} frames preparados")
+    return snaps, g
+
+
+# ================================================================
+# CÂMERA — keyframes suaves (sem aceleração no final)
+# ================================================================
+# keyframes em frac: (dist, cam_z, focal_z)
+CAM_KEYS_FRAC = [0.00, 0.10, 0.22, 0.40, 0.52, 0.72, 0.80, 1.00]
+CAM_DIST     = [14000, 11000, 7000, 5000, 4200, 3200, 4500, 9000]
+CAM_Z        = [7000,  8000, 5200, 4200, 3000,  400,  900, 5000]
+CAM_FOCAL_Z  = [8000,  9000, 4500, 3800, 2000,    0,    0, 800]
+
+
+def get_camera(frac, xc, yc):
+    dist = np.interp(frac, CAM_KEYS_FRAC, CAM_DIST)
+    cam_z = np.interp(frac, CAM_KEYS_FRAC, CAM_Z)
+    focal_z = np.interp(frac, CAM_KEYS_FRAC, CAM_FOCAL_Z)
+    angle = 25 + 200*frac          # rotação lenta e CONSTANTE
+    cx = xc + dist*np.cos(np.radians(angle))
+    cy = yc + dist*np.sin(np.radians(angle))
+    return (cx, cy, cam_z), (xc, yc, focal_z), (0, 0, 1)
+
+
+# Cores iridescentes (madrepérola) para o topo glaciado
+IRID_COLORS = ['lavender', 'lightcyan', 'mistyrose', 'palegreen',
+               'lightyellow', 'thistle']
+
+
+def render_animation(snaps, g, output_path='viz/toro_collapse_3d.mp4'):
     import pyvista as pv
     pv.OFF_SCREEN = True
-    
-    x, y, z = grid_info['x'], grid_info['y'], grid_info['z']
-    xc, yc = grid_info['xc'], grid_info['yc']
-    n_frames = len(snapshots['time'])
-    
+
+    x, y, z = g['x'], g['y'], g['z']
+    xc, yc = g['xc'], g['yc']
+    n_frames = len(snaps['frac'])
+
     print("\n" + "=" * 60)
-    print("  RENDERIZAÇÃO 3D CINEMATOGRÁFICA — PyVista")
+    print("  RENDERIZAÇÃO 3D — PyVista (v6, 7 fases)")
     print("=" * 60)
-    print(f"  Frames: {n_frames} @ {FPS}fps")
-    print(f"  Resolução: {RESOLUTION}")
-    
+
     frame_dir = 'viz/frames_collapse'
     os.makedirs(frame_dir, exist_ok=True)
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    for fi in range(n_frames):
-        t = snapshots['time'][fi]
-        qg = snapshots['qg'][fi]
-        p_prime = snapshots['p_prime'][fi]
-        wave = snapshots['wave_shell'][fi]
-        z_piston = snapshots['z_piston_base'][fi]
-        
-        frac = fi / max(n_frames - 1, 1)
-        
-        # ---- Plotter ----
-        pl = pv.Plotter(off_screen=True, window_size=list(RESOLUTION))
-        
-        # Background: escurece após impacto
-        if t < 0:
-            pl.set_background('black', top='midnightblue')
-        else:
-            flash = max(0, 1.0 - t * 2)  # flash branco no impacto
-            bg = [int(10 + flash*100)] * 3
-            top = [int(25 + flash*60), int(25 + flash*40), int(80 + flash*80)]
-            pl.set_background(
-                [c/255 for c in bg],
-                top=[c/255 for c in top]
-            )
-        
-        # ---- Grid base ----
+
+    def add_iso(pl, field, level, color, opacity):
         grid = pv.RectilinearGrid(x, y, z)
-        
-        # ============================================
-        # PISTÃO DE HIDROMETEOROS
-        # ============================================
-        grid.cell_data['QG'] = qg[:-1, :-1, :-1].ravel(order='F')
+        grid.cell_data['F'] = field[:-1, :-1, :-1].ravel(order='F')
         iso = grid.cell_data_to_point_data()
-        
-        # Camada externa (halo)
         try:
-            c1 = iso.contour([1.5], scalars='QG')
-            if c1.n_points > 10:
-                pl.add_mesh(c1, color='mediumpurple', opacity=0.35,
+            c = iso.contour([level], scalars='F')
+            if c.n_points > 10:
+                pl.add_mesh(c, color=color, opacity=opacity,
                             smooth_shading=True)
         except Exception:
             pass
-        
-        # Core denso
-        try:
-            c2 = iso.contour([4.0], scalars='QG')
-            if c2.n_points > 10:
-                pl.add_mesh(c2, color='darkviolet', opacity=0.7,
-                            smooth_shading=True)
-        except Exception:
-            pass
-        
-        # Núcleo ultra-denso
-        try:
-            c3 = iso.contour([6.5], scalars='QG')
-            if c3.n_points > 10:
-                pl.add_mesh(c3, color='indigo', opacity=0.9,
-                            smooth_shading=True)
-        except Exception:
-            pass
-        
-        # ============================================
-        # PRESSÃO (compressão/sucção)
-        # ============================================
-        if abs(p_prime).max() > 100:
-            grid_p = pv.RectilinearGrid(x, y, z)
-            
-            # Compressão (p' > 0): laranja
-            p_pos = np.clip(p_prime, 0, None)
-            grid_p.cell_data['P_POS'] = p_pos[:-1,:-1,:-1].ravel(order='F')
-            iso_p = grid_p.cell_data_to_point_data()
-            try:
-                cp = iso_p.contour([300], scalars='P_POS')
-                if cp.n_points > 10:
-                    pl.add_mesh(cp, color='orangered', opacity=0.3,
-                                smooth_shading=True)
-            except Exception:
-                pass
-            
-            # Sucção (p' < 0): azul
-            p_neg = np.clip(-p_prime, 0, None)
-            grid_p.cell_data['P_NEG'] = p_neg[:-1,:-1,:-1].ravel(order='F')
-            iso_pn = grid_p.cell_data_to_point_data()
-            try:
-                cn = iso_pn.contour([200], scalars='P_NEG')
-                if cn.n_points > 10:
-                    pl.add_mesh(cn, color='royalblue', opacity=0.25,
-                                smooth_shading=True)
-            except Exception:
-                pass
-        
-        # ============================================
-        # ONDAS ACÚSTICAS
-        # ============================================
-        if wave.max() > 0.5:
-            grid_w = pv.RectilinearGrid(x, y, z)
-            grid_w.cell_data['WAVE'] = wave[:-1,:-1,:-1].ravel(order='F')
-            iso_w = grid_w.cell_data_to_point_data()
-            
-            # Múltiplas cascas com cores diferentes
-            wave_levels = [
-                (0.5, 0.12, 'lightcyan'),    # fraca — quase transparente
-                (1.5, 0.20, 'cyan'),          # média
-                (3.0, 0.30, 'deepskyblue'),   # forte
-                (6.0, 0.45, 'dodgerblue'),    # muito forte
-                (10.0, 0.55, 'royalblue'),    # frente principal
-            ]
-            
-            for level, opacity, color in wave_levels:
-                if wave.max() > level:
-                    try:
-                        cw = iso_w.contour([level], scalars='WAVE')
-                        if cw.n_points > 10:
-                            pl.add_mesh(cw, color=color, opacity=opacity,
-                                        smooth_shading=True)
-                    except Exception:
-                        pass
-        
-        # ============================================
-        # SOLO
-        # ============================================
-        ground_size = x.max() - x.min()
-        
-        if t > 0:
-            # Solo marrom com cratera
-            ground = pv.Plane(center=(xc, yc, -5),
-                              direction=(0,0,1),
-                              i_size=ground_size*1.2, j_size=ground_size*1.2,
-                              i_resolution=30, j_resolution=30)
-            pl.add_mesh(ground, color='saddlebrown', opacity=0.85)
-            
-            # Anel de impacto (expande)
-            ring_r = R_PISTON + 200 * t
-            ring = pv.Disc(center=(xc, yc, 10),
-                          inner=ring_r - 100, outer=ring_r + 100,
-                          normal=(0,0,1), r_res=1, c_res=80)
-            pl.add_mesh(ring, color='darkorange', opacity=0.6)
-            
-            # Flash no centro do impacto
-            if t < 0.5:
-                flash_r = 200 + C_SOUND * t * 0.3
-                sphere = pv.Sphere(radius=flash_r, center=(xc, yc, flash_r*0.5))
-                flash_opacity = max(0, 0.6 - t)
-                pl.add_mesh(sphere, color='white', opacity=flash_opacity)
+
+    for fi in range(n_frames):
+        frac = snaps['frac'][fi]
+        name = snaps['phase'][fi]
+        local = snaps['local'][fi]
+
+        pl = pv.Plotter(off_screen=True, window_size=list(RESOLUTION))
+        pl.set_background('black', top='midnightblue')
+
+        # ---- Nuvem com topo iridescente ----
+        qc = snaps['qc'][fi]
+        add_iso(pl, qc, 1.2, 'slategray', 0.18)
+        # camadas iridescentes no topo (cores giram lentamente)
+        ci = int(frac*40) % len(IRID_COLORS)
+        top_mask = (g['Z'] > Z_CLOUD_TOP - 3500).astype(np.float32)
+        add_iso(pl, qc*top_mask, 2.5, IRID_COLORS[ci], 0.30)
+        add_iso(pl, qc*top_mask, 3.5, IRID_COLORS[(ci+2) % len(IRID_COLORS)], 0.35)
+
+        # ---- Funil do vórtice ----
+        add_iso(pl, snaps['funnel'][fi], 1.5, 'gainsboro', 0.45)
+        add_iso(pl, snaps['funnel'][fi], 3.5, 'lightsteelblue', 0.55)
+
+        # ---- Graupel / jato ----
+        qg = snaps['qg'][fi]
+        add_iso(pl, qg, 1.5, 'mediumpurple', 0.35)
+        add_iso(pl, qg, 4.0, 'darkviolet', 0.70)
+        add_iso(pl, qg, 6.5, 'indigo', 0.90)
+
+        # ---- INC (partículas) ----
+        if name in ('INFLUXO_INC', 'VORTICE'):
+            loc = local if name == 'INFLUXO_INC' else 1.0
+            pts = inc_particles(g, loc)
+            cloud_pts = pv.PolyData(pts)
+            pl.add_mesh(cloud_pts, color='aquamarine', point_size=3,
+                        render_points_as_spheres=True, opacity=0.8)
+
+        # ---- Hélices do updraft ----
+        if name in ('VORTICE', 'SEDIMENTACAO', 'QUEDA_JATO'):
+            for line in helix_lines(g, max(local, 0.3)):
+                try:
+                    sp = pv.Spline(line, 200).tube(radius=35)
+                    pl.add_mesh(sp, color='deepskyblue', opacity=0.5)
+                except Exception:
+                    pass
+
+        # ---- Ondas acústicas ----
+        wv = snaps['wave'][fi]
+        if wv.max() > 0.5:
+            for level, op, colr in [(1.5, 0.18, 'cyan'), (4.0, 0.30, 'deepskyblue'),
+                                    (8.0, 0.45, 'royalblue')]:
+                add_iso(pl, wv, level, colr, op)
+
+        # ---- Solo / ravina ----
+        reveal = snaps['reveal'][fi]
+        if reveal > 0:
+            GX, GY, GZ, _ = ravine_surface(g, reveal)
+            surf = pv.StructuredGrid(GX, GY, GZ)
+            pl.add_mesh(surf, color='saddlebrown', opacity=0.95,
+                        smooth_shading=True)
+            # água/lama no fundo do canal
+            if reveal > 0.5:
+                chan = pv.Plane(center=(xc, yc, -RAVINE_DEPTH*reveal*0.8),
+                                direction=(0, 0, 1),
+                                i_size=RAVINE_WID*0.9, j_size=RAVINE_LEN*0.9)
+                pl.add_mesh(chan, color='steelblue', opacity=0.5)
         else:
-            ground = pv.Plane(center=(xc, yc, -5),
-                              direction=(0,0,1),
-                              i_size=ground_size*1.2, j_size=ground_size*1.2,
+            ground = pv.Plane(center=(xc, yc, -5), direction=(0, 0, 1),
+                              i_size=(x.max()-x.min())*1.2,
+                              j_size=(y.max()-y.min())*1.2,
                               i_resolution=30, j_resolution=30)
             pl.add_mesh(ground, color='forestgreen', opacity=0.7)
-        
-        # ============================================
-        # CÂMERA CINEMATOGRÁFICA
-        # ============================================
-        pos, focal, up = get_camera(t, frac, xc, yc, z_piston)
+
+        # ---- Flash do impacto ----
+        if name == 'IMPACTO' and local < 0.6:
+            fr = 200 + 800*local
+            sph = pv.Sphere(radius=fr, center=(xc, yc, fr*0.4))
+            pl.add_mesh(sph, color='white', opacity=max(0.0, 0.6 - local))
+
+        # ---- Câmera ----
+        pos, focal, up = get_camera(frac, xc, yc)
         pl.camera_position = [pos, focal, up]
-        
-        # ============================================
-        # HUD
-        # ============================================
-        if t < 0:
-            phase_text = "COLAPSO DO PISTÃO"
-            z_text = f"  Alt. pistão: {z_piston:.0f} m"
-        elif t < 1.5:
-            phase_text = ">>> IMPACTO <<<"
-            z_text = f"  Onda: {C_SOUND*t:.0f} m"
-        else:
-            phase_text = "PROPAGAÇÃO ACÚSTICA"
-            z_text = f"  Raio da onda: {C_SOUND*t:.0f} m"
-        
-        pl.add_text(
-            f"TORÓ — {phase_text}\n"
-            f"t = {t:+.2f}s{z_text}",
-            position='upper_left', font_size=11, color='white'
-        )
-        
-        pl.add_text(
-            f"v_fall = {V_FALL:.1f} m/s (v6, M=10 ton, R={R_PISTON_FIS:.0f}m)  |  c = {C_SOUND:.0f} m/s",
-            position='lower_left', font_size=8, color='lightgray'
-        )
-        
-        pl.add_text(
-            "Colapso do Pistão Hidráulico — Análise 3D\n"
-            "Valada São Paulo — Planalto Mirador, SC",
-            position='lower_right', font_size=8, color='lightgray'
-        )
-        
-        # Salvar
-        frame_path = os.path.join(frame_dir, f'frame_{fi:04d}.png')
-        pl.screenshot(frame_path)
+
+        # ---- HUD ----
+        t_real = snaps['t_real'][fi]
+        pl.add_text(f"TORÓ v6 — {snaps['label'][fi]}\n"
+                    f"t = {t_real:+.1f} s (tempo físico)",
+                    position='upper_left', font_size=11, color='white')
+        pl.add_text(f"pistão: M≈10 ton, R={R_PISTON_FIS:.0f} m, "
+                    f"v_queda={V_FALL:.1f} m/s (F2, 60 m/s)  |  c={C_SOUND:.0f} m/s",
+                    position='lower_left', font_size=8, color='lightgray')
+        pl.add_text("Modelo Toró v6 — Valada São Paulo, Planalto Mirador/SC",
+                    position='lower_right', font_size=8, color='lightgray')
+
+        pl.screenshot(os.path.join(frame_dir, f'frame_{fi:04d}.png'))
         pl.close()
-        
-        if fi % 10 == 0:
-            print(f"  Frame {fi:3d}/{n_frames} | t={t:+.2f}s | "
-                  f"cam_z={pos[2]:.0f}m")
-    
-    # ============================================
-    # COMPILAR VÍDEO
-    # ============================================
+
+        if fi % 20 == 0:
+            print(f"  Frame {fi:4d}/{n_frames} | {name}")
+
+    # ---- Compilar vídeo ----
     print("\n  Compilando vídeo...")
     try:
         import imageio.v3 as iio
-        
         frames = []
         for i in range(n_frames):
             fp = os.path.join(frame_dir, f'frame_{i:04d}.png')
             if os.path.exists(fp):
                 frames.append(iio.imread(fp))
-        
         if frames:
-            # MP4
-            iio.imwrite(output_path, frames, fps=FPS,
-                        codec='libx264',
+            iio.imwrite(output_path, frames, fps=FPS, codec='libx264',
                         plugin='pyav')
             print(f"  ✅ Vídeo: {output_path}")
-            
-            # GIF (reduzido para tamanho menor)
             gif_path = output_path.replace('.mp4', '.gif')
-            # Usar cada 2 frames para GIF menor
-            gif_frames = frames[::2]
-            iio.imwrite(gif_path, gif_frames,
-                        duration=int(1000 / (FPS/2)),
-                        loop=0)
+            iio.imwrite(gif_path, frames[::3],
+                        duration=int(1000/(FPS/3)), loop=0)
             print(f"  ✅ GIF: {gif_path}")
-    except Exception as e:
-        print(f"  [WARN] Erro codec, tentando ffmpeg direto...")
+    except Exception:
+        print("  [WARN] Erro codec, tentando ffmpeg direto...")
         try:
             import imageio
             writer = imageio.get_writer(output_path, fps=FPS)
@@ -537,27 +502,26 @@ def render_animation(snapshots, grid_info,
         except Exception as e2:
             print(f"  [ERR] {e2}")
             print(f"  Frames PNG em: {frame_dir}/")
-    
+
     print("  Renderização completa!")
 
 
 if __name__ == '__main__':
-    # Argumentos opcionais
     n_frames = N_FRAMES
     for i, arg in enumerate(sys.argv[1:]):
         if arg == '--frames' and i+2 < len(sys.argv):
             n_frames = int(sys.argv[i+2])
         elif arg == '--fps' and i+2 < len(sys.argv):
             FPS = int(sys.argv[i+2])
-    
+
     print("\n" + "#" * 60)
-    print("# TORÓ — Animação 3D Cinematográfica")
-    print("# Colapso do Pistão + Ondas Acústicas")
+    print("# TORÓ v6 — Animação 3D Cinematográfica (7 fases)")
+    print("# Glaciação → INC → Vórtice → Sedimentação → Jato → Impacto → Ravina")
     print("#" * 60)
-    
-    snapshots, grid_info = simulate_collapse(n_frames)
-    render_animation(snapshots, grid_info)
-    
+
+    snaps, g = simulate_collapse(n_frames)
+    render_animation(snaps, g)
+
     print("\n" + "=" * 60)
     print("  ANIMAÇÃO COMPLETA")
     print("  Vídeo: viz/toro_collapse_3d.mp4")
